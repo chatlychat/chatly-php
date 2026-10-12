@@ -22,8 +22,8 @@ final class RateLimitException extends ChatlyException
      * opts into. A client that reads only `Retry-After` finds nothing on
      * every real 429.
      *
-     * So this reads `Retry-After` when present (a proxy or a self-hosted
-     * install may add one) and every `Retry-After-*` otherwise, and returns
+     * So this reads `Retry-After` when present (a reverse proxy in front of
+     * the API may add one) and every `Retry-After-*` otherwise, and returns
      * the LARGEST value found: when several buckets report, waiting for the
      * shortest one would retry into a wall that is still up.
      *

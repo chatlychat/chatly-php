@@ -94,9 +94,9 @@ final class ChatlyClient
 
     /**
      * @param string                  $apiKey    A workspace API key (`ck_…`). Required.
-     * @param string|null             $baseUrl   Override only for a self-hosted
-     *                                           install. Null or empty means
-     *                                           {@see DEFAULT_BASE_URL}.
+     * @param string|null             $baseUrl   Another Chatly environment, or
+     *                                           a test server. Null or empty
+     *                                           means {@see DEFAULT_BASE_URL}.
      * @param float                   $timeout   Seconds per attempt.
      * @param RetryPolicy|null        $retries   Null means the default: 3
      *                                           attempts, equal jitter,
@@ -133,8 +133,8 @@ final class ChatlyClient
          * `getenv() ?: ''`, arrives here as `''`. Treating that as a literal
          * base URL would build `/v1/contacts` as a relative path and fail in a
          * way that looks like a network problem. Treating it as "not
-         * configured" lands on the host that is correct for everybody who is
-         * not self-hosting.
+         * configured" lands on production, which is the host that is correct
+         * for everybody who has not deliberately pointed at another one.
          */
         $resolved = $baseUrl === null || trim($baseUrl) === '' ? self::DEFAULT_BASE_URL : trim($baseUrl);
         $scheme = parse_url($resolved, \PHP_URL_SCHEME);

@@ -396,6 +396,67 @@ final class RequestCases
                 );
             },
 
+            '§2 billing->usage requires an eventType and sends it' => static function (): void {
+                /*
+                 * The handler validates `eventType` against a closed list and
+                 * throws before doing any work, so a call with no query is a
+                 * 400 and never a total. It shipped as an OPTIONAL argument in
+                 * four of these SDKs, which made the method impossible to call
+                 * successfully — so it is required here, and the value is
+                 * checked at the call site rather than costing a round trip to
+                 * learn the same thing.
+                 */
+                $transport = new FakeTransport();
+                $transport->push(200, [
+                    'workspaceId' => 'ws_1',
+                    'eventType' => 'ai.tokens',
+                    'from' => '2026-10-01T00:00:00.000Z',
+                    'to' => '2026-11-01T00:00:00.000Z',
+                    'total' => 184203,
+                    'count' => 912,
+                ]);
+                $result = self::client($transport)->billing->usage('ai.tokens');
+
+                Assert::same('eventType=ai.tokens', $transport->query(), 'the event type must reach the API');
+                Assert::same('/v1/billing/usage', $transport->path(), 'on the usage route');
+                Assert::same(184203, $result['total'] ?? null, 'and the summary comes back');
+
+                $reflected = new \ReflectionMethod(\Chatly\Resources\Billing::class, 'usage');
+                Assert::same(
+                    1,
+                    $reflected->getNumberOfRequiredParameters(),
+                    'eventType must be a REQUIRED parameter, not an optional one',
+                );
+            },
+
+            '§2 billing->usage refuses an event type the API does not know' => static function (): void {
+                $chatly = self::client(new FakeTransport());
+                $error = Assert::throws(
+                    \InvalidArgumentException::class,
+                    static fn () => $chatly->billing->usage('messages.sent'),
+                    'a near-miss event type must fail at the call site',
+                );
+                Assert::contains(
+                    'message.sent.agent',
+                    $error->getMessage(),
+                    'the message should list what is accepted',
+                );
+            },
+
+            '§2 billing->usage carries an explicit window when given one' => static function (): void {
+                $transport = new FakeTransport();
+                $transport->push(200, ['total' => 0, 'count' => 0]);
+                self::client($transport)->billing->usage('conversation.opened', [
+                    'from' => new \DateTimeImmutable('2026-09-01 00:00:00', new \DateTimeZone('UTC')),
+                    'to' => '2026-10-01T00:00:00Z',
+                ]);
+
+                $query = $transport->query();
+                Assert::contains('eventType=conversation.opened', $query, 'the event type');
+                Assert::contains('from=2026-09-01T00%3A00%3A00%2B00%3A00', $query, 'a DateTime is formatted for you');
+                Assert::contains('to=2026-10-01T00%3A00%3A00Z', $query, 'a string passes through');
+            },
+
             '§2 tickets->bulk sends ids, action and payload' => static function (): void {
                 $transport = new FakeTransport();
                 $transport->push(200, ['updated' => 2, 'skipped' => []]);

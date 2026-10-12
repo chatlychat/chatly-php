@@ -52,7 +52,7 @@ actually needs, and keep it in your environment, not in your repository.
 ### Which routes are reachable
 
 140 of the API's 886 routes accept an API key. The rest answer a `ck_` key
-with **403** because they need a signed-in person — a reaction records *who*
+with **403** because they need a signed-in person — a reaction records _who_
 reacted, and a key is not a person.
 
 This SDK has hand-written methods for 55 of those routes (the table below).
@@ -80,13 +80,13 @@ $chatly = new ChatlyClient(
 );
 ```
 
-| Argument | Default | Notes |
-| --- | --- | --- |
-| `apiKey` | — | Required. An empty or whitespace-only key throws `InvalidArgumentException` immediately, not on the first call. |
-| `baseUrl` | `https://api.chatlychat.com` | Another Chatly environment, or a test server; it is also the second positional argument. `null` **and `''`** both mean the default, so an unset `CHATLY_API_URL` lands on production rather than nowhere. A non-`http(s)` URL throws. |
-| `timeout` | `15.0` | Seconds allowed per attempt, not per call. Three attempts can take three times this. |
-| `retries` | 3 attempts | See [Retries](#retries). `RetryPolicy::none()` turns it off. |
-| `transport` | `Chatly\Transport` (curl) | Any `Chatly\TransportInterface`. |
+| Argument    | Default                      | Notes                                                                                                                                                                                                                                 |
+| ----------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apiKey`    | —                            | Required. An empty or whitespace-only key throws `InvalidArgumentException` immediately, not on the first call.                                                                                                                       |
+| `baseUrl`   | `https://api.chatlychat.com` | Another Chatly environment, or a test server; it is also the second positional argument. `null` **and `''`** both mean the default, so an unset `CHATLY_API_URL` lands on production rather than nowhere. A non-`http(s)` URL throws. |
+| `timeout`   | `15.0`                       | Seconds allowed per attempt, not per call. Three attempts can take three times this.                                                                                                                                                  |
+| `retries`   | 3 attempts                   | See [Retries](#retries). `RetryPolicy::none()` turns it off.                                                                                                                                                                          |
+| `transport` | `Chatly\Transport` (curl)    | Any `Chatly\TransportInterface`.                                                                                                                                                                                                      |
 
 ### Using your own HTTP stack
 
@@ -128,9 +128,9 @@ Every method below maps to exactly one route. Arrays marked `$query` accept
 
 ### Root
 
-| Method | Route |
-| --- | --- |
-| `$chatly->whoami()` | `GET /v1/api-keys/whoami` |
+| Method                                                      | Route                                                |
+| ----------------------------------------------------------- | ---------------------------------------------------- |
+| `$chatly->whoami()`                                         | `GET /v1/api-keys/whoami`                            |
 | `$chatly->request($method, $path, $query, $body, $headers)` | anything — see [the escape hatch](#the-escape-hatch) |
 
 `whoami()` returns `['workspaceId' => …, 'scopes' => [...]]`. Make it first in
@@ -139,18 +139,18 @@ of a 403 from an unrelated endpoint in three weeks.
 
 ### `contacts`
 
-| Method | Route |
-| --- | --- |
-| `list(array $query = []): Page` | `GET /v1/contacts` |
-| `autoList(array $query = [], ?int $maxPages = null): Generator` | walks `GET /v1/contacts` |
-| `get(string $id)` | `GET /v1/contacts/{id}` |
-| `upsert(array $contact)` | `POST /v1/contacts` |
-| `bulkUpsert(array $contacts)` | `POST /v1/contacts/bulk` |
-| `merge(string $id, string $mergedId)` | `POST /v1/contacts/{id}/merge` |
-| `addTags(string $id, string $tag)` | `POST /v1/contacts/{id}/tags` |
-| `removeTag(string $id, string $tag)` | `DELETE /v1/contacts/{id}/tags/{tag}` |
-| `unsubscribe(string $id, bool $unsubscribed = true, ?string $reason = null)` | `POST /v1/contacts/{id}/unsubscribe` |
-| `journey(string $id, array $query = [])` | `GET /v1/contacts/{id}/journey` |
+| Method                                                                       | Route                                 |
+| ---------------------------------------------------------------------------- | ------------------------------------- |
+| `list(array $query = []): Page`                                              | `GET /v1/contacts`                    |
+| `autoList(array $query = [], ?int $maxPages = null): Generator`              | walks `GET /v1/contacts`              |
+| `get(string $id)`                                                            | `GET /v1/contacts/{id}`               |
+| `upsert(array $contact)`                                                     | `POST /v1/contacts`                   |
+| `bulkUpsert(array $contacts)`                                                | `POST /v1/contacts/bulk`              |
+| `merge(string $id, string $mergedId)`                                        | `POST /v1/contacts/{id}/merge`        |
+| `addTags(string $id, string $tag)`                                           | `POST /v1/contacts/{id}/tags`         |
+| `removeTag(string $id, string $tag)`                                         | `DELETE /v1/contacts/{id}/tags/{tag}` |
+| `unsubscribe(string $id, bool $unsubscribed = true, ?string $reason = null)` | `POST /v1/contacts/{id}/unsubscribe`  |
+| `journey(string $id, array $query = [])`                                     | `GET /v1/contacts/{id}/journey`       |
 
 - `upsert` keys on `externalId`: sending the same one twice updates rather
   than duplicating.
@@ -167,22 +167,22 @@ of a 403 from an unrelated endpoint in three weeks.
 
 ### `conversations`
 
-| Method | Route |
-| --- | --- |
-| `list(array $query = []): Page` | `GET /v1/conversations` |
-| `autoList(array $query = [], ?int $maxPages = null): Generator` | walks `GET /v1/conversations` |
-| `get(string $id)` | `GET /v1/conversations/{id}` |
-| `messages(string $id, array $query = []): Page` | `GET /v1/conversations/{id}/messages` |
-| `autoMessages(string $id, array $query = [], ?int $maxPages = null): Generator` | walks the messages |
-| `send(string $id, string $body, array $options = [])` | `POST /v1/conversations/{id}/messages` |
-| `unattended(array $query = [])` | `GET /v1/conversations/unattended` |
-| `agentHandling(string $id)` | `GET /v1/conversations/{id}/agent-handling` |
-| `setAgentHandling(string $id, string $state, ?string $reason = null)` | `PUT /v1/conversations/{id}/agent-handling` |
-| `generatedReplies(string $id)` | `GET /v1/conversations/{id}/generated-replies` |
-| `generateReply(string $id, string $body, ?string $basedOnMessageId = null, array $options = [])` | `POST /v1/conversations/{id}/generated-replies` |
-| `scheduledMessages(string $id)` | `GET /v1/conversations/{id}/scheduled-messages` |
-| `scheduleMessage(string $id, string $body, DateTimeInterface\|string $sendAt)` | `POST /v1/conversations/{id}/scheduled-messages` |
-| `cancelScheduled(string $scheduledId)` | `DELETE /v1/conversations/scheduled-messages/{scheduledId}` |
+| Method                                                                                           | Route                                                       |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `list(array $query = []): Page`                                                                  | `GET /v1/conversations`                                     |
+| `autoList(array $query = [], ?int $maxPages = null): Generator`                                  | walks `GET /v1/conversations`                               |
+| `get(string $id)`                                                                                | `GET /v1/conversations/{id}`                                |
+| `messages(string $id, array $query = []): Page`                                                  | `GET /v1/conversations/{id}/messages`                       |
+| `autoMessages(string $id, array $query = [], ?int $maxPages = null): Generator`                  | walks the messages                                          |
+| `send(string $id, string $body, array $options = [])`                                            | `POST /v1/conversations/{id}/messages`                      |
+| `unattended(array $query = [])`                                                                  | `GET /v1/conversations/unattended`                          |
+| `agentHandling(string $id)`                                                                      | `GET /v1/conversations/{id}/agent-handling`                 |
+| `setAgentHandling(string $id, string $state, ?string $reason = null)`                            | `PUT /v1/conversations/{id}/agent-handling`                 |
+| `generatedReplies(string $id)`                                                                   | `GET /v1/conversations/{id}/generated-replies`              |
+| `generateReply(string $id, string $body, ?string $basedOnMessageId = null, array $options = [])` | `POST /v1/conversations/{id}/generated-replies`             |
+| `scheduledMessages(string $id)`                                                                  | `GET /v1/conversations/{id}/scheduled-messages`             |
+| `scheduleMessage(string $id, string $body, DateTimeInterface\|string $sendAt)`                   | `POST /v1/conversations/{id}/scheduled-messages`            |
+| `cancelScheduled(string $scheduledId)`                                                           | `DELETE /v1/conversations/scheduled-messages/{scheduledId}` |
 
 - `send` is the one write into a thread a key can make. `$options['kind']` is
   `text` (the default), `rich`, `note` or `system_event`.
@@ -201,16 +201,16 @@ of a 403 from an unrelated endpoint in three weeks.
 
 ### `tickets`
 
-| Method | Route |
-| --- | --- |
-| `list(array $query = []): Page` | `GET /v1/tickets` |
-| `autoList(array $query = [], ?int $maxPages = null): Generator` | walks `GET /v1/tickets` |
-| `comments(string $id)` | `GET /v1/tickets/{id}/comments` |
-| `forConversation(string $conversationId)` | `GET /v1/tickets/for-conversation/{conversationId}` |
-| `queues()` | `GET /v1/tickets/queues` |
-| `merge(string $id, string $loserId)` | `POST /v1/tickets/{id}/merge` |
-| `split(string $id, string $title, array $fields = [])` | `POST /v1/tickets/{id}/split` |
-| `bulk(array $ids, string $action, array $payload = [])` | `POST /v1/tickets/bulk` |
+| Method                                                          | Route                                               |
+| --------------------------------------------------------------- | --------------------------------------------------- |
+| `list(array $query = []): Page`                                 | `GET /v1/tickets`                                   |
+| `autoList(array $query = [], ?int $maxPages = null): Generator` | walks `GET /v1/tickets`                             |
+| `comments(string $id)`                                          | `GET /v1/tickets/{id}/comments`                     |
+| `forConversation(string $conversationId)`                       | `GET /v1/tickets/for-conversation/{conversationId}` |
+| `queues()`                                                      | `GET /v1/tickets/queues`                            |
+| `merge(string $id, string $loserId)`                            | `POST /v1/tickets/{id}/merge`                       |
+| `split(string $id, string $title, array $fields = [])`          | `POST /v1/tickets/{id}/split`                       |
+| `bulk(array $ids, string $action, array $payload = [])`         | `POST /v1/tickets/bulk`                             |
 
 - `list` excludes `merged` tickets unless you filter on status explicitly.
 - `comments` includes internal notes. Filter on `isInternal` before showing
@@ -223,25 +223,32 @@ of a 403 from an unrelated endpoint in three weeks.
 
 ### `macros`
 
-| Method | Route |
-| --- | --- |
-| `list(array $query = []): Page` | `GET /v1/macros` |
-| `autoList(array $query = [], ?int $maxPages = null): Generator` | walks `GET /v1/macros` |
-| `create(array $macro)` | `POST /v1/macros` |
-| `update(string $id, array $changes)` | `PATCH /v1/macros/{id}` |
-| `delete(string $id)` | `DELETE /v1/macros/{id}` |
+| Method                               | Route                    |
+| ------------------------------------ | ------------------------ |
+| `list(array $query = [])`            | `GET /v1/macros`         |
+| `create(array $macro)`               | `POST /v1/macros`        |
+| `update(string $id, array $changes)` | `PATCH /v1/macros/{id}`  |
+| `delete(string $id)`                 | `DELETE /v1/macros/{id}` |
+
+**`list()` is not paginated and returns a plain array**, so there is no
+`autoList()` for it and no `cursor` or `limit` to pass. The route caps the
+result at 200 rows ordered by usage rank, which means the first page is the
+answer — paging it would trade a round trip for the least-used macros. The
+four filters it does accept are `scope`, `team` (a uuid), `query` (a
+substring) and `language` (a BCP-47-ish tag, which **ranks** matching macros
+first rather than hiding the rest).
 
 A macro must carry a `body`, `actions`, or both. `scope` is required, and when
 it is `team` so is `teamId`. `update` is a partial patch, not a replace.
 
 ### `kb`
 
-| Method | Route |
-| --- | --- |
-| `articles(array $query = []): Page` | `GET /v1/kb/articles` |
-| `autoArticles(array $query = [], ?int $maxPages = null): Generator` | walks the articles |
-| `article(string $slug)` | `GET /v1/kb/articles/{slug}` |
-| `collections()` | `GET /v1/kb/collections` |
+| Method                                                              | Route                        |
+| ------------------------------------------------------------------- | ---------------------------- |
+| `articles(array $query = []): Page`                                 | `GET /v1/kb/articles`        |
+| `autoArticles(array $query = [], ?int $maxPages = null): Generator` | walks the articles           |
+| `article(string $slug)`                                             | `GET /v1/kb/articles/{slug}` |
+| `collections()`                                                     | `GET /v1/kb/collections`     |
 
 `articles` is the authoring view and includes drafts; narrow it with
 `['filter[]' => ['status:eq:published']]`. `article` takes a **slug**, not an
@@ -250,10 +257,10 @@ unpaginated.
 
 ### `search`
 
-| Method | Route |
-| --- | --- |
-| `query(string $q, array $options = [])` | `GET /v1/search` |
-| `kb(string $q, array $options = [])` | `GET /v1/search` with `kinds=kb` |
+| Method                                  | Route                            |
+| --------------------------------------- | -------------------------------- |
+| `query(string $q, array $options = [])` | `GET /v1/search`                 |
+| `kb(string $q, array $options = [])`    | `GET /v1/search` with `kinds=kb` |
 
 ```php
 $hits = $chatly->search->query('refund', ['kinds' => ['ticket', 'conversation'], 'limit' => 10]);
@@ -269,11 +276,11 @@ right for you; it matters if you reach the route through `request()`.
 
 ### `events`
 
-| Method | Route |
-| --- | --- |
-| `track(string $contactId, string $name, array $properties = [])` | `POST /v1/cdp/events` |
-| `list(array $query = []): Page` | `GET /v1/cdp/events` |
-| `autoList(array $query = [], ?int $maxPages = null): Generator` | walks `GET /v1/cdp/events` |
+| Method                                                           | Route                      |
+| ---------------------------------------------------------------- | -------------------------- |
+| `track(string $contactId, string $name, array $properties = [])` | `POST /v1/cdp/events`      |
+| `list(array $query = []): Page`                                  | `GET /v1/cdp/events`       |
+| `autoList(array $query = [], ?int $maxPages = null): Generator`  | walks `GET /v1/cdp/events` |
 
 ```php
 $chatly->events->track($contactId, 'order_placed', ['total' => 4999, 'currency' => 'EUR']);
@@ -290,29 +297,29 @@ implies the narrow one.
 
 ### `webhooks` (delivery history)
 
-| Method | Route |
-| --- | --- |
-| `deliveries(array $query = []): Page` | `GET /v1/webhooks/deliveries` |
-| `autoDeliveries(array $query = [], ?int $maxPages = null): Generator` | walks the deliveries |
-| `delivery(string $id)` | `GET /v1/webhooks/deliveries/{id}` |
-| `redeliver(string $id)` | `POST /v1/webhooks/deliveries/{id}/redeliver` |
+| Method                                                                | Route                                         |
+| --------------------------------------------------------------------- | --------------------------------------------- |
+| `deliveries(array $query = []): Page`                                 | `GET /v1/webhooks/deliveries`                 |
+| `autoDeliveries(array $query = [], ?int $maxPages = null): Generator` | walks the deliveries                          |
+| `delivery(string $id)`                                                | `GET /v1/webhooks/deliveries/{id}`            |
+| `redeliver(string $id)`                                               | `POST /v1/webhooks/deliveries/{id}/redeliver` |
 
 Narrow the list with `endpointId` and `status`. `delivery` includes the exact
 body we POSTed, which is what you need to re-verify a signature offline.
 `redeliver` **queues**: the response says `queued: true` and the outcome
-appears as a new attempt in the list, sent to the endpoint's *current* url.
+appears as a new attempt in the list, sent to the endpoint's _current_ url.
 
 Verifying an **incoming** delivery is [a different thing](#webhook-verification)
 and needs no API call.
 
 ### `reports`
 
-| Method | Route |
-| --- | --- |
-| `overview(?int $days = null)` | `GET /v1/reports/overview` |
-| `agents(?int $days = null)` | `GET /v1/reports/agents` |
+| Method                                  | Route                                  |
+| --------------------------------------- | -------------------------------------- |
+| `overview(?int $days = null)`           | `GET /v1/reports/overview`             |
+| `agents(?int $days = null)`             | `GET /v1/reports/agents`               |
 | `conversationsByDay(?int $days = null)` | `GET /v1/reports/conversations-by-day` |
-| `sla(array $query = [])` | `GET /v1/reports/sla` |
+| `sla(array $query = [])`                | `GET /v1/reports/sla`                  |
 
 `days` is clamped server-side to 1–90 (default 7, except `conversationsByDay`
 which defaults to 14). An unparseable value falls back to the default rather
@@ -322,29 +329,49 @@ was used. `sla` takes a date range (`from`, `to`, `group_by`,
 
 ### `channels`, `billing`, `workspace`
 
-| Method | Route |
-| --- | --- |
-| `$chatly->channels->list()` | `GET /v1/channels` |
-| `$chatly->channels->get(string $id)` | `GET /v1/channels/{id}` |
-| `$chatly->billing->plans()` | `GET /v1/billing/plans` |
-| `$chatly->billing->usage()` | `GET /v1/billing/usage` |
-| `$chatly->workspace->settings()` | `GET /v1/workspace/settings` |
-| `$chatly->workspace->labels()` | `GET /v1/labels` |
-| `$chatly->workspace->inboxes()` | `GET /v1/inboxes` |
+| Method                                                               | Route                        |
+| -------------------------------------------------------------------- | ---------------------------- |
+| `$chatly->channels->list()`                                          | `GET /v1/channels`           |
+| `$chatly->channels->get(string $id)`                                 | `GET /v1/channels/{id}`      |
+| `$chatly->billing->plans()`                                          | `GET /v1/billing/plans`      |
+| `$chatly->billing->usage(string $eventType, array $query = [])`      | `GET /v1/billing/usage`      |
+| `$chatly->workspace->settings()`                                     | `GET /v1/workspace/settings` |
+| `$chatly->workspace->labels()`                                       | `GET /v1/labels`             |
+| `$chatly->workspace->inboxes()`                                      | `GET /v1/inboxes`            |
 | `$chatly->workspace->teamMembers(string $teamId, array $query = [])` | `GET /v1/teams/{id}/members` |
-| `$chatly->workspace->agentSkills()` | `GET /v1/agents/skills` |
+| `$chatly->workspace->agentSkills()`                                  | `GET /v1/agents/skills`      |
 
 Channels are read-only from a key: configuration needs `channels:write`, which
 no key-accessible route grants. Each channel row carries
 `originsRestricted` — check it on a web channel, because an **empty**
-allowed-origins list means *any* origin and that is invisible if you only look
+allowed-origins list means _any_ origin and that is invisible if you only look
 at the list.
 
 `teamMembers()` is where you get the `userId` values that `assigneeUserId`
 fields expect. A key cannot enumerate teams, so the team id has to come from
 the dashboard or from a human session.
 
-`agentSkills()` returns the workspace's skill *taxonomy* —
+`billing->usage()` reports month-to-date usage for **one** event type, and the
+event type is required — it is not a rollup across all of them. The four the
+API accepts are `conversation.opened`, `message.sent.agent`,
+`message.sent.bot` and `ai.tokens`, also available as
+`Chatly\Resources\Billing::USAGE_EVENT_TYPES`; anything else throws
+`InvalidArgumentException` at the call site rather than costing a round trip
+to learn the same thing. The window defaults to the current calendar month in
+UTC, and you can narrow it with `from` and `to`:
+
+```php
+$tokens = $chatly->billing->usage('ai.tokens');
+$september = $chatly->billing->usage('conversation.opened', [
+    'from' => new DateTimeImmutable('2026-09-01', new DateTimeZone('UTC')),
+    'to'   => new DateTimeImmutable('2026-10-01', new DateTimeZone('UTC')),
+]);
+// ['workspaceId' => …, 'eventType' => …, 'from' => …, 'to' => …, 'total' => …, 'count' => …]
+```
+
+It needs `workspace:billing:read`, an owner-level scope.
+
+`agentSkills()` returns the workspace's skill _taxonomy_ —
 `['skills' => [...]]`, the distinct labels anyone holds. An empty array is a
 normal first-load state. Which skills one agent holds
 (`GET /v1/agents/{userId}/skills`) needs a signed-in person and is not
@@ -386,29 +413,29 @@ try {
 }
 ```
 
-| Class | When |
-| --- | --- |
-| `AuthenticationException` | 401 — the key is missing, malformed, revoked or expired |
-| `PermissionException` | 403 — valid key, missing scope |
-| `NotFoundException` | 404 — no such resource *in this workspace* |
-| `ConflictException` | 409 — conflicting write, including an idempotency-key mismatch |
-| `ValidationException` | 422 **and 400** — the request did not validate |
-| `RateLimitException` | 429 — plus `getRetryAfter(): ?int` |
-| `ServerException` | 5xx |
-| `TransportException` | no response at all; `getStatus()` is `0` |
-| `ChatlyException` | the base, and any other non-2xx |
+| Class                     | When                                                           |
+| ------------------------- | -------------------------------------------------------------- |
+| `AuthenticationException` | 401 — the key is missing, malformed, revoked or expired        |
+| `PermissionException`     | 403 — valid key, missing scope                                 |
+| `NotFoundException`       | 404 — no such resource _in this workspace_                     |
+| `ConflictException`       | 409 — conflicting write, including an idempotency-key mismatch |
+| `ValidationException`     | 422 **and 400** — the request did not validate                 |
+| `RateLimitException`      | 429 — plus `getRetryAfter(): ?int`                             |
+| `ServerException`         | 5xx                                                            |
+| `TransportException`      | no response at all; `getStatus()` is `0`                       |
+| `ChatlyException`         | the base, and any other non-2xx                                |
 
 Every one of them exposes:
 
-| Accessor | Returns |
-| --- | --- |
-| `getStatus(): int` | HTTP status, `0` for a transport failure |
-| `getCode()` / `getErrorCode(): ?string` | the API's `code` (`not_found`, `validation_failed`, …) |
-| `getMessage(): string` | the API's `message`, or a readable fallback |
-| `getRequestId(): ?string` | the `x-request-id` response header |
-| `getBody(): string` | the raw response body, for anything the above loses |
-| `getData(): ?array` | the decoded error object, unwrapped from its `{"error":{…}}` envelope |
-| `getHeaders(): array` | response headers, names lowercased |
+| Accessor                                | Returns                                                               |
+| --------------------------------------- | --------------------------------------------------------------------- |
+| `getStatus(): int`                      | HTTP status, `0` for a transport failure                              |
+| `getCode()` / `getErrorCode(): ?string` | the API's `code` (`not_found`, `validation_failed`, …)                |
+| `getMessage(): string`                  | the API's `message`, or a readable fallback                           |
+| `getRequestId(): ?string`               | the `x-request-id` response header                                    |
+| `getBody(): string`                     | the raw response body, for anything the above loses                   |
+| `getData(): ?array`                     | the decoded error object, unwrapped from its `{"error":{…}}` envelope |
+| `getHeaders(): array`                   | response headers, names lowercased                                    |
 
 Three things worth knowing:
 
@@ -464,7 +491,7 @@ default the SDK mints a fresh UUID per call, so an SDK-level retry cannot
 double-write: the key is minted **once**, before the first attempt, and every
 retry re-sends it.
 
-To retry the *same* logical operation yourself — across a job restart, say —
+To retry the _same_ logical operation yourself — across a job restart, say —
 pin a key you derive from your own data:
 
 ```php
@@ -511,7 +538,8 @@ foreach ($chatly->tickets->autoList([], maxPages: 3) as $ticket) { /* … */ }
 ```
 
 `autoList`, `autoMessages`, `autoArticles`, `autoDeliveries` — one per paged
-route. It stops on a null cursor, and it stops if the server ever hands back a
+route, and there are seven of those. `macros->list()` is **not** one of them:
+that route is pagination-exempt and returns a plain array. It stops on a null cursor, and it stops if the server ever hands back a
 cursor it has already followed, so a server-side bug becomes a truncated
 result rather than an infinite loop inside your `foreach`.
 
@@ -549,13 +577,13 @@ header, a missing field, a non-numeric timestamp, a stale timestamp, or an
 empty secret. A verifier that throws is an accepted webhook in a handler that
 forgot to catch.
 
-| Parameter | Default | |
-| --- | --- | --- |
-| `$body` | — | the **raw bytes** received |
-| `$signatureHeader` | — | the `x-livechat-signature` value |
-| `$secret` | — | the endpoint's `whsec_…` signing secret |
-| `$tolerance` | `300.0` | seconds the timestamp may differ from now; `INF` to skip |
-| `$now` | system clock | unix seconds, for tests and archive replay |
+| Parameter          | Default      |                                                          |
+| ------------------ | ------------ | -------------------------------------------------------- |
+| `$body`            | —            | the **raw bytes** received                               |
+| `$signatureHeader` | —            | the `x-livechat-signature` value                         |
+| `$secret`          | —            | the endpoint's `whsec_…` signing secret                  |
+| `$tolerance`       | `300.0`      | seconds the timestamp may differ from now; `INF` to skip |
+| `$now`             | system clock | unix seconds, for tests and archive replay               |
 
 ### Pass the RAW body
 
@@ -755,7 +783,7 @@ called it, with interpolated segments normalised back to `{id}` form.
 {
   "sdk": "php",
   "generatedBy": "tests/Cases/SurfaceCases.php",
-  "entries": [ { "ns": "contacts", "name": "list", "http": "GET", "path": "/v1/contacts" } ]
+  "entries": [{ "ns": "contacts", "name": "list", "http": "GET", "path": "/v1/contacts" }]
 }
 ```
 

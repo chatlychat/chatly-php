@@ -9,6 +9,7 @@ use Chatly\Pagination\Page;
 use Chatly\Pagination\Paginator;
 use Chatly\Tests\Assert;
 use Chatly\Tests\FakeTransport;
+use Chatly\Tests\Skipped;
 
 /** CONTRACT §5 (pagination) and §10.6. */
 final class PaginationCases
@@ -166,13 +167,81 @@ final class PaginationCases
                 Assert::contains('limit=5', $transport->query(), 'and the rest of the query survives');
             },
 
+            '§5 GET /v1/macros returns the bare array it sends, not a page' => static function (): void {
+                /*
+                 * The route is `@PaginationExempt`: the service caps the
+                 * result at 200 rows ordered by usage rank, so the first page
+                 * IS the answer. A client that wrapped this in a page
+                 * envelope — or worse, tried to follow a cursor it invented —
+                 * would be reading a shape the API does not send. Two SDKs
+                 * raised a decode error here in real use while their suites
+                 * stayed green, because their fakes answered every route with
+                 * `{items,nextCursor}`.
+                 */
+                $transport = new FakeTransport();
+                $transport->push(200, [['id' => 'm_1', 'name' => 'Refund'], ['id' => 'm_2', 'name' => 'Escalate']]);
+                $macros = self::client($transport)->macros->list(['scope' => 'workspace']);
+
+                Assert::true(\is_array($macros), 'the array must come back as an array');
+                Assert::false($macros instanceof Page, 'and must not be wrapped in a Page');
+                Assert::same(2, \count($macros), 'both rows');
+                Assert::same('m_1', $macros[0]['id'] ?? null, 'in the order the service ranked them');
+                Assert::same(
+                    'scope=workspace',
+                    $transport->query(),
+                    'the four filters this route accepts are scope, team, query and language — no cursor',
+                );
+                Assert::false(
+                    method_exists(self::client(new FakeTransport())->macros, 'autoList'),
+                    'macros->autoList() must not exist: there is no cursor to walk',
+                );
+            },
+
+            '§5 the auto-walk set matches the manifest\'s paged entries, and there are 7' => static function (): void {
+                /*
+                 * An anti-vacuity floor on the list below.
+                 *
+                 * SEVEN, not eight: `macros.list` left the paged set because
+                 * its ROUTE is pagination-exempt, not because a parser
+                 * stopped recognising the entry. That distinction is the
+                 * whole point of asserting the number — a count that shrinks
+                 * because rows fell out of a parse is the bug this guards
+                 * against, and it looks identical to a count that shrinks for
+                 * a good reason unless somebody writes down which happened.
+                 */
+                Assert::same(
+                    7,
+                    \count(SurfaceCases::PAGED),
+                    'the manifest carries 7 paged entries',
+                );
+
+                $manifestPath = \dirname(__DIR__, 3) . '/sdk-spec/surface.json';
+                if (!is_file($manifestPath)) {
+                    throw new Skipped('surface.json is not reachable from here (' . $manifestPath . ')');
+                }
+                $manifest = json_decode((string) file_get_contents($manifestPath), true, 512, \JSON_THROW_ON_ERROR);
+                $paged = [];
+                foreach ($manifest['entries'] as $entry) {
+                    if (($entry['paged'] ?? false) === true) {
+                        $paged[] = $entry['ns'] . '.' . $entry['name'];
+                    }
+                }
+                sort($paged);
+                $mine = SurfaceCases::PAGED;
+                sort($mine);
+                Assert::same(
+                    $paged,
+                    $mine,
+                    'the paged set here must be the manifest\'s, exactly',
+                );
+            },
+
             '§5 every paged namespace exposes an auto-walk over the right path' => static function (): void {
                 $walks = [
                     ['contacts', 'autoList', [], '/v1/contacts'],
                     ['conversations', 'autoList', [], '/v1/conversations'],
                     ['conversations', 'autoMessages', ['conv_1'], '/v1/conversations/conv_1/messages'],
                     ['tickets', 'autoList', [], '/v1/tickets'],
-                    ['macros', 'autoList', [], '/v1/macros'],
                     ['kb', 'autoArticles', [], '/v1/kb/articles'],
                     ['events', 'autoList', [], '/v1/cdp/events'],
                     ['webhooks', 'autoDeliveries', [], '/v1/webhooks/deliveries'],

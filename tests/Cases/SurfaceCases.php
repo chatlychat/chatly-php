@@ -51,6 +51,29 @@ final class SurfaceCases
     public const SENTINELS = ['__p0__', '__p1__'];
 
     /**
+     * The `ns.name` of every manifest entry marked `paged: true`.
+     *
+     * SEVEN, not eight. `macros.list` was listed as paged for a day and is
+     * not: its handler is `@PaginationExempt` and returns a bare array capped
+     * at 200 rows, ordered by usage rank. It left this set because the ROUTE
+     * is pagination-exempt — not because a parser stopped recognising it,
+     * which is the other reason a count like this shrinks and the one that
+     * would be a bug.
+     *
+     * Used for two things: deciding what the fake transport answers each
+     * route with, and as an anti-vacuity floor in {@see PaginationCases}.
+     */
+    public const PAGED = [
+        'contacts.list',
+        'conversations.list',
+        'conversations.messages',
+        'tickets.list',
+        'kb.articles',
+        'events.list',
+        'webhooks.deliveries',
+    ];
+
+    /**
      * `[namespace, manifest name, PHP method, verb, manifest path, arguments]`.
      *
      * Arguments use {@see SENTINELS} for path parameters, in path order, and
@@ -122,7 +145,7 @@ final class SurfaceCases
             ['channels', 'get', 'get', 'GET', '/v1/channels/{id}', ['__p0__']],
 
             ['billing', 'plans', 'plans', 'GET', '/v1/billing/plans', []],
-            ['billing', 'usage', 'usage', 'GET', '/v1/billing/usage', []],
+            ['billing', 'usage', 'usage', 'GET', '/v1/billing/usage', ['ai.tokens']],
 
             ['workspace', 'settings', 'settings', 'GET', '/v1/workspace/settings', []],
             ['workspace', 'labels', 'labels', 'GET', '/v1/labels', []],
@@ -154,8 +177,20 @@ final class SurfaceCases
             $label = $namespace . '.' . $specName;
 
             $transport = new FakeTransport();
-            // One body that satisfies a Page reader and a plain `mixed` reader.
-            $transport->push(200, ['items' => [], 'nextCursor' => null]);
+            /*
+             * The shape the ROUTE returns, not one shape for all 55.
+             *
+             * A fake that answers every route with `{items,nextCursor}` is
+             * how the .NET and Rust clients shipped a decode error on
+             * `GET /v1/macros` — which returns a bare array — with green
+             * suites. `PAGED` below is the manifest's own paged set; anything
+             * outside it is answered with a bare array here, so a method that
+             * insists on a page envelope fails in this suite rather than in
+             * somebody's production.
+             */
+            $transport->push(200, \in_array($label, self::PAGED, true)
+                ? ['items' => [], 'nextCursor' => null]
+                : []);
             $client = new ChatlyClient('ck_test', transport: $transport);
 
             $target = $namespace === 'root' ? $client : $client->{$namespace};
@@ -227,6 +262,40 @@ final class SurfaceCases
     }
 
     /**
+     * Serialise the lock the way this repository's formatter would.
+     *
+     * ─── TWO SPACES, NOT FOUR ─────────────────────────────────────────────
+     *
+     * `JSON_PRETTY_PRINT` indents with four spaces and PHP offers no way to
+     * change that. prettier owns every `.json` file here at `tabWidth: 2`,
+     * and it runs from a lint-staged hook, so a four-space lock is rewritten to two the
+     * moment anybody commits — and rewritten back to four the next time the
+     * suite runs. That is a committed artifact changing on every run in both
+     * directions, for no reason, forever; it also means `format:check` and
+     * this test cannot both be green.
+     *
+     * Halving the leading indentation is safe because no value in the lock
+     * contains a newline — every one is a short `ns`, `name`, verb or path.
+     *
+     * @param array<string,mixed> $lock
+     */
+    private static function encodeLock(array $lock): string
+    {
+        $json = json_encode(
+            $lock,
+            \JSON_PRETTY_PRINT | \JSON_UNESCAPED_SLASHES | \JSON_THROW_ON_ERROR,
+        );
+
+        $two = preg_replace_callback(
+            '/^(?: {4})+/m',
+            static fn (array $m): string => str_repeat(' ', \strlen($m[0]) / 2),
+            $json,
+        );
+
+        return (string) $two . "\n";
+    }
+
+    /**
      * `ns.name => "VERB path"`, for readable comparisons.
      *
      * @param array<int,array<string,mixed>> $entries
@@ -264,10 +333,7 @@ final class SurfaceCases
                     'generatedBy' => 'tests/Cases/SurfaceCases.php',
                     'entries' => $entries,
                 ];
-                $json = json_encode(
-                    $lock,
-                    \JSON_PRETTY_PRINT | \JSON_UNESCAPED_SLASHES | \JSON_THROW_ON_ERROR,
-                ) . "\n";
+                $json = self::encodeLock($lock);
 
                 $path = \dirname(__DIR__, 2) . '/' . self::LOCK_FILE;
                 $existing = is_file($path) ? (string) file_get_contents($path) : null;
@@ -373,6 +439,26 @@ final class SurfaceCases
                     Assert::same($route, $actual[$key], "the route recorded for {$key}");
                 }
                 Assert::same(\count($expected), \count($actual), 'the manifest and the lock must be the same size');
+            },
+
+            'surface: the lock is written the way the repo formatter writes JSON' => static function (): void {
+                /*
+                 * Two-space indent, one trailing newline. `JSON_PRETTY_PRINT`
+                 * emits four and cannot be told otherwise, and prettier owns
+                 * the .json files here at tabWidth 2 from a lint-staged hook
+                 * — so a four-space lock is rewritten on every commit and
+                 * rewritten back on every test run, which makes a committed
+                 * artifact churn in both directions and `format:check`
+                 * unpassable. This is what keeps those two from fighting.
+                 */
+                $raw = (string) file_get_contents(\dirname(__DIR__, 2) . '/' . self::LOCK_FILE);
+
+                Assert::contains("\n  \"sdk\": \"php\"", $raw, 'top-level keys must be indented two spaces');
+                Assert::notContains("\n    \"sdk\"", $raw, 'four-space indent means JSON_PRETTY_PRINT leaked back in');
+                Assert::true(str_ends_with($raw, "}\n"), 'exactly one trailing newline, as prettier writes');
+                Assert::false(str_ends_with($raw, "}\n\n"), 'and not two');
+                Assert::notContains("\r\n", $raw, 'LF, per .prettierrc endOfLine');
+                Assert::notContains('\\/', $raw, 'slashes must not be escaped — paths would be unreadable');
             },
 
             'surface: the lock is sorted by ns then name' => static function (): void {

@@ -77,7 +77,7 @@ class ChatlyException extends \RuntimeException
      * **Expect null from production today.** The platform's public API
      * reference states it neither reads nor emits `X-Request-Id`; the header
      * is read here because the SDK contract specifies it and because a
-     * reverse proxy in front of a self-hosted install may well add one. To
+     * reverse proxy in front of the API may well add one. To
      * correlate a call with your own logs, key on the `Idempotency-Key` you
      * sent instead — {@see \Chatly\ChatlyClient::withIdempotencyKey()}.
      */

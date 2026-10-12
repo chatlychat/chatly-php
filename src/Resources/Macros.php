@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Chatly\Resources;
 
-use Chatly\Pagination\Page;
-
 /**
  * Macros — saved replies, optionally with actions attached.
  *
@@ -14,25 +12,32 @@ use Chatly\Pagination\Page;
 final class Macros extends AbstractResource
 {
     /**
-     * `GET /v1/macros` — one page.
+     * `GET /v1/macros` — the macro library, as a plain array.
      *
-     * @param array<string,mixed> $query `cursor`, `limit`, `filter[]`, `sort`, `fields`.
+     * ─── NOT CURSOR-PAGINATED, AND THAT IS NOT AN OVERSIGHT ───────────────
+     *
+     * The handler is `@PaginationExempt`: the service caps the result at 200
+     * rows and orders them by usage rank, so the first page IS the answer —
+     * paging it would hand you the least-used macros in exchange for a
+     * round trip. There is deliberately no `autoList()` here, and no
+     * `cursor` or `limit` parameter to pass; this method returns the array
+     * the API sends.
+     *
+     * The shared manifest said `paged: true` for a day, and a client that
+     * believed it decoded a bare array as a page envelope.
+     *
+     * @param array<string,mixed> $query The four filters the route accepts,
+     *                                   and only those: `scope`, `team` (a
+     *                                   team uuid), `query` (a substring,
+     *                                   ≤120 chars) and `language` (a
+     *                                   BCP-47-ish tag, which RANKS matching
+     *                                   macros first rather than hiding the
+     *                                   rest — an unrecognised value simply
+     *                                   ranks nothing).
      */
-    public function list(array $query = []): Page
+    public function list(array $query = []): mixed
     {
-        return $this->httpPage('/v1/macros', $query);
-    }
-
-    /**
-     * Every macro, across pages.
-     *
-     * @param array<string,mixed> $query
-     *
-     * @return \Generator<int,mixed>
-     */
-    public function autoList(array $query = [], ?int $maxPages = null): \Generator
-    {
-        yield from $this->httpWalk('/v1/macros', $query, $maxPages);
+        return $this->httpGet('/v1/macros', $query);
     }
 
     /**

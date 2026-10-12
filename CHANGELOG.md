@@ -40,6 +40,9 @@ contract.
   `autoDeliveries()`, each a `Generator`. Stops on a null cursor, and stops if
   the server ever repeats a cursor, so a server bug is a truncated result
   rather than an infinite loop. `Chatly\Pagination\Page` for a single page.
+  Seven paged routes is the whole set: `GET /v1/macros` is pagination-exempt
+  and returns a plain array, so `macros->list()` returns that array and has no
+  auto-walk.
 - **`Chatly\Webhooks::verifySignature()`** — HMAC-SHA256 over
   `<t>.<raw body>`, constant-time compare, 300-second default tolerance.
   Returns false and never throws, including for an empty secret.
@@ -71,6 +74,9 @@ Three behaviours here differ from the Node SDK, and all three are deliberate:
 - **A 400 raises `ValidationException`**, not the base class. The API answers
   a failed zod parse with 400 `validation_failed`, so treating only 422 as
   validation would put the common case in the wrong branch.
+- **`billing->usage()` takes a required `$eventType`.** The handler validates
+  it against a closed list and throws before doing any work, so the
+  no-argument form that four of these SDKs shipped could never succeed.
 - **`getRetryAfter()` reads the suffixed headers.** Rate limiting here is
   per-bucket (`Retry-After-short`, `Retry-After-login`) and there is no plain
   `Retry-After`; it returns the largest value found.
@@ -79,7 +85,7 @@ Three behaviours here differ from the Node SDK, and all three are deliberate:
 
 - `getRequestId()` is normally `null`: the API neither reads nor emits
   `X-Request-Id`. The header is read because the contract specifies it and a
-  proxy in front of a self-hosted install may add one.
+  reverse proxy in front of the API may add one.
 - `Psr18Transport` cannot apply the client's `timeout` argument — PSR-18 has
   no per-request timeout. Configure it on the client you pass in.
 
