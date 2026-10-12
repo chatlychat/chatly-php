@@ -1,0 +1,424 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Chatly\Tests\Cases;
+
+use Chatly\ChatlyClient;
+use Chatly\Tests\Assert;
+use Chatly\Tests\FakeTransport;
+use Chatly\Tests\Skipped;
+
+/**
+ * The 55 methods of the shared SDK surface, EXECUTED, and the parity evidence
+ * that execution produces.
+ *
+ * ─── WHY THIS RUNS THE CLIENT INSTEAD OF READING THE SOURCE ───────────────
+ *
+ * The first version of `scripts/check-sdk-surface-parity.mjs` matched path
+ * strings in SDK source TEXT, and it was fooled: doc comments mentioning a
+ * route counted as implementations of it, so it printed 55/55 for methods
+ * that did not exist. Text matching cannot tell documentation from code, and
+ * it cannot see a path assembled through a helper either — which is how every
+ * path in this package is built.
+ *
+ * So the evidence here is a record of what each method actually sent. Every
+ * method is called against the fake transport; the request it issued is
+ * observed; the interpolated segments are mapped back to the manifest's
+ * parameter names BY POSITION; and the result is written to
+ * `surface.lock.json`. A comment cannot fake an entry in that file, because
+ * nothing but an executed request puts one there.
+ */
+final class SurfaceCases
+{
+    /** Where the lock is written, relative to the package root. */
+    public const LOCK_FILE = 'surface.lock.json';
+
+    /**
+     * Sentinel arguments.
+     *
+     * Passed in place of every id that lands in a PATH segment, in the order
+     * the placeholders appear in the manifest's template. A segment equal to
+     * one of these is a placeholder position; anything else is a literal the
+     * SDK chose, and is recorded verbatim so a wrong literal cannot be
+     * normalised away.
+     *
+     * Deliberately not URL-safe-adjacent to any real path segment, and made
+     * of unreserved characters so `rawurlencode()` leaves them alone — if
+     * encoding mangled them this case would fail rather than silently stop
+     * recognising them.
+     */
+    public const SENTINELS = ['__p0__', '__p1__'];
+
+    /**
+     * `[namespace, manifest name, PHP method, verb, manifest path, arguments]`.
+     *
+     * Arguments use {@see SENTINELS} for path parameters, in path order, and
+     * ordinary throwaway values for everything else (a body field, a title, a
+     * tag that travels in the body rather than the path).
+     *
+     * @return array<int,array{0:string,1:string,2:string,3:string,4:string,5:array<int,mixed>}>
+     */
+    public static function surface(): array
+    {
+        return [
+            ['root', 'whoami', 'whoami', 'GET', '/v1/api-keys/whoami', []],
+
+            ['contacts', 'list', 'list', 'GET', '/v1/contacts', []],
+            ['contacts', 'get', 'get', 'GET', '/v1/contacts/{id}', ['__p0__']],
+            ['contacts', 'upsert', 'upsert', 'POST', '/v1/contacts', [['email' => 'a@b.test']]],
+            ['contacts', 'bulk_upsert', 'bulkUpsert', 'POST', '/v1/contacts/bulk', [[['email' => 'a@b.test']]]],
+            ['contacts', 'merge', 'merge', 'POST', '/v1/contacts/{id}/merge', ['__p0__', 'c_absorbed']],
+            ['contacts', 'add_tags', 'addTags', 'POST', '/v1/contacts/{id}/tags', ['__p0__', 'vip']],
+            ['contacts', 'remove_tag', 'removeTag', 'DELETE', '/v1/contacts/{id}/tags/{tag}', ['__p0__', '__p1__']],
+            ['contacts', 'unsubscribe', 'unsubscribe', 'POST', '/v1/contacts/{id}/unsubscribe', ['__p0__']],
+            ['contacts', 'journey', 'journey', 'GET', '/v1/contacts/{id}/journey', ['__p0__']],
+
+            ['conversations', 'list', 'list', 'GET', '/v1/conversations', []],
+            ['conversations', 'get', 'get', 'GET', '/v1/conversations/{id}', ['__p0__']],
+            ['conversations', 'messages', 'messages', 'GET', '/v1/conversations/{id}/messages', ['__p0__']],
+            ['conversations', 'send', 'send', 'POST', '/v1/conversations/{id}/messages', ['__p0__', 'hello']],
+            ['conversations', 'unattended', 'unattended', 'GET', '/v1/conversations/unattended', []],
+            ['conversations', 'agent_handling', 'agentHandling', 'GET', '/v1/conversations/{id}/agent-handling', ['__p0__']],
+            ['conversations', 'set_agent_handling', 'setAgentHandling', 'PUT', '/v1/conversations/{id}/agent-handling', ['__p0__', 'handled']],
+            ['conversations', 'generated_replies', 'generatedReplies', 'GET', '/v1/conversations/{id}/generated-replies', ['__p0__']],
+            ['conversations', 'generate_reply', 'generateReply', 'POST', '/v1/conversations/{id}/generated-replies', ['__p0__', 'a draft']],
+            ['conversations', 'scheduled_messages', 'scheduledMessages', 'GET', '/v1/conversations/{id}/scheduled-messages', ['__p0__']],
+            ['conversations', 'schedule_message', 'scheduleMessage', 'POST', '/v1/conversations/{id}/scheduled-messages', ['__p0__', 'later', '2026-01-01T00:00:00Z']],
+            ['conversations', 'cancel_scheduled', 'cancelScheduled', 'DELETE', '/v1/conversations/scheduled-messages/{scheduled_id}', ['__p0__']],
+
+            ['tickets', 'list', 'list', 'GET', '/v1/tickets', []],
+            ['tickets', 'comments', 'comments', 'GET', '/v1/tickets/{id}/comments', ['__p0__']],
+            ['tickets', 'for_conversation', 'forConversation', 'GET', '/v1/tickets/for-conversation/{conversation_id}', ['__p0__']],
+            ['tickets', 'queues', 'queues', 'GET', '/v1/tickets/queues', []],
+            ['tickets', 'merge', 'merge', 'POST', '/v1/tickets/{id}/merge', ['__p0__', 't_absorbed']],
+            ['tickets', 'split', 'split', 'POST', '/v1/tickets/{id}/split', ['__p0__', 'The second problem']],
+            ['tickets', 'bulk', 'bulk', 'POST', '/v1/tickets/bulk', [['t_1'], 'status', ['status' => 'closed']]],
+
+            ['macros', 'list', 'list', 'GET', '/v1/macros', []],
+            ['macros', 'create', 'create', 'POST', '/v1/macros', [['name' => 'Refund', 'scope' => 'workspace', 'body' => 'done']]],
+            ['macros', 'update', 'update', 'PATCH', '/v1/macros/{id}', ['__p0__', ['name' => 'Refunded']]],
+            ['macros', 'delete', 'delete', 'DELETE', '/v1/macros/{id}', ['__p0__']],
+
+            ['kb', 'articles', 'articles', 'GET', '/v1/kb/articles', []],
+            ['kb', 'article', 'article', 'GET', '/v1/kb/articles/{slug}', ['__p0__']],
+            ['kb', 'collections', 'collections', 'GET', '/v1/kb/collections', []],
+
+            ['search', 'query', 'query', 'GET', '/v1/search', ['refund']],
+
+            ['events', 'track', 'track', 'POST', '/v1/cdp/events', ['c_1', 'order_placed']],
+            ['events', 'list', 'list', 'GET', '/v1/cdp/events', []],
+
+            ['webhooks', 'deliveries', 'deliveries', 'GET', '/v1/webhooks/deliveries', []],
+            ['webhooks', 'delivery', 'delivery', 'GET', '/v1/webhooks/deliveries/{id}', ['__p0__']],
+            ['webhooks', 'redeliver', 'redeliver', 'POST', '/v1/webhooks/deliveries/{id}/redeliver', ['__p0__']],
+
+            ['reports', 'overview', 'overview', 'GET', '/v1/reports/overview', []],
+            ['reports', 'agents', 'agents', 'GET', '/v1/reports/agents', []],
+            ['reports', 'conversations_by_day', 'conversationsByDay', 'GET', '/v1/reports/conversations-by-day', []],
+            ['reports', 'sla', 'sla', 'GET', '/v1/reports/sla', []],
+
+            ['channels', 'list', 'list', 'GET', '/v1/channels', []],
+            ['channels', 'get', 'get', 'GET', '/v1/channels/{id}', ['__p0__']],
+
+            ['billing', 'plans', 'plans', 'GET', '/v1/billing/plans', []],
+            ['billing', 'usage', 'usage', 'GET', '/v1/billing/usage', []],
+
+            ['workspace', 'settings', 'settings', 'GET', '/v1/workspace/settings', []],
+            ['workspace', 'labels', 'labels', 'GET', '/v1/labels', []],
+            ['workspace', 'inboxes', 'inboxes', 'GET', '/v1/inboxes', []],
+            ['workspace', 'team_members', 'teamMembers', 'GET', '/v1/teams/{id}/members', ['__p0__']],
+            ['workspace', 'agent_skills', 'agentSkills', 'GET', '/v1/agents/skills', []],
+        ];
+    }
+
+    /**
+     * Call every method, observe what it sent, and rebuild the path template
+     * from the OBSERVED segments.
+     *
+     * The rebuild is the evidence. An observed segment is emitted verbatim
+     * unless it is one of the sentinels passed in, in which case it is
+     * replaced by the manifest's parameter name at that index. So a method
+     * that hits `/v1/contacts/__p0__/labels/__p1__` rebuilds as
+     * `/v1/contacts/{id}/labels/{tag}` and fails the comparison; a method
+     * that ignores its argument and hard-codes an id rebuilds with that id in
+     * the path and fails too. Nothing is normalised away.
+     *
+     * @return array<int,array{ns:string,name:string,http:string,path:string}>
+     */
+    private static function recordLockEntries(): array
+    {
+        $entries = [];
+
+        foreach (self::surface() as [$namespace, $specName, $method, $verb, $template, $args]) {
+            $label = $namespace . '.' . $specName;
+
+            $transport = new FakeTransport();
+            // One body that satisfies a Page reader and a plain `mixed` reader.
+            $transport->push(200, ['items' => [], 'nextCursor' => null]);
+            $client = new ChatlyClient('ck_test', transport: $transport);
+
+            $target = $namespace === 'root' ? $client : $client->{$namespace};
+            Assert::true(
+                method_exists($target, $method),
+                "{$label} must exist as " . ($namespace === 'root' ? '' : $namespace . '->') . $method . '()',
+            );
+
+            $target->{$method}(...$args);
+
+            Assert::same(1, $transport->count(), "{$label} must make exactly one request");
+            Assert::same($verb, $transport->method(), "{$label} must be a {$verb}");
+            Assert::same('Bearer ck_test', $transport->header('authorization'), "{$label} must authenticate");
+
+            if (\in_array($verb, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                Assert::true(
+                    $transport->header('idempotency-key') !== null,
+                    "{$label} is a write and must carry an Idempotency-Key",
+                );
+            } else {
+                Assert::same(
+                    null,
+                    $transport->header('idempotency-key'),
+                    "{$label} is a read and must not carry an Idempotency-Key",
+                );
+            }
+
+            $observed = explode('/', $transport->path());
+            $expected = explode('/', $template);
+            Assert::same(
+                \count($expected),
+                \count($observed),
+                "{$label} issued a path with a different number of segments than {$template}: "
+                . $transport->path(),
+            );
+
+            $rebuilt = [];
+            foreach ($observed as $index => $segment) {
+                if (\in_array($segment, self::SENTINELS, true)) {
+                    // A placeholder position. Take the manifest's own name for
+                    // it — matched by position, which is the whole convention.
+                    $name = $expected[$index];
+                    Assert::true(
+                        str_starts_with($name, '{') && str_ends_with($name, '}'),
+                        "{$label} put the argument in segment {$index}, where {$template} has a literal",
+                    );
+                    $rebuilt[] = $name;
+
+                    continue;
+                }
+                $rebuilt[] = $segment;
+            }
+
+            $path = implode('/', $rebuilt);
+            Assert::same(
+                $template,
+                $path,
+                "{$label} issued {$transport->path()}, which normalises to {$path}, not {$template}",
+            );
+
+            $entries[] = ['ns' => $namespace, 'name' => $specName, 'http' => $verb, 'path' => $path];
+        }
+
+        usort($entries, static function (array $a, array $b): int {
+            return [$a['ns'], $a['name']] <=> [$b['ns'], $b['name']];
+        });
+
+        return $entries;
+    }
+
+    /**
+     * `ns.name => "VERB path"`, for readable comparisons.
+     *
+     * @param array<int,array<string,mixed>> $entries
+     *
+     * @return array<string,string>
+     */
+    private static function routeMap(array $entries): array
+    {
+        $map = [];
+        foreach ($entries as $entry) {
+            $map[$entry['ns'] . '.' . $entry['name']] = $entry['http'] . ' ' . $entry['path'];
+        }
+        ksort($map);
+
+        return $map;
+    }
+
+    /** @return array<string,\Closure():void> */
+    public static function cases(): array
+    {
+        return [
+            'surface: all 55 methods execute the documented verb and path, and surface.lock.json is regenerated from what they sent' => static function (): void {
+                $entries = self::recordLockEntries();
+                Assert::same(55, \count($entries), 'the shared surface is 55 methods');
+
+                $keys = array_map(static fn (array $e): string => $e['ns'] . '.' . $e['name'], $entries);
+                Assert::same(
+                    \count($keys),
+                    \count(array_unique($keys)),
+                    'two rows claim the same ns.name',
+                );
+
+                $lock = [
+                    'sdk' => 'php',
+                    'generatedBy' => 'tests/Cases/SurfaceCases.php',
+                    'entries' => $entries,
+                ];
+                $json = json_encode(
+                    $lock,
+                    \JSON_PRETTY_PRINT | \JSON_UNESCAPED_SLASHES | \JSON_THROW_ON_ERROR,
+                ) . "\n";
+
+                $path = \dirname(__DIR__, 2) . '/' . self::LOCK_FILE;
+                $existing = is_file($path) ? (string) file_get_contents($path) : null;
+                if ($existing === $json) {
+                    // Already current. Do not rewrite — a test should not dirty
+                    // the working tree for no reason.
+                    return;
+                }
+                if (@file_put_contents($path, $json) === false) {
+                    /*
+                     * Unwritable AND stale. A read-only checkout (an install
+                     * under `vendor/`) is a fine reason not to be able to
+                     * write, but it is not a reason to accept a lock that
+                     * disagrees with what the client just did.
+                     */
+                    throw new \RuntimeException(sprintf(
+                        '%s is out of date and could not be rewritten. Run the suite somewhere writable.',
+                        $path,
+                    ));
+                }
+            },
+
+            'surface: surface.lock.json on disk equals packages/sdk-spec/surface.json' => static function (): void {
+                $lockPath = \dirname(__DIR__, 2) . '/' . self::LOCK_FILE;
+                Assert::true(
+                    is_file($lockPath),
+                    self::LOCK_FILE . ' must exist — the case above writes it',
+                );
+                $lock = json_decode((string) file_get_contents($lockPath), true, 512, \JSON_THROW_ON_ERROR);
+                Assert::same('php', $lock['sdk'] ?? null, 'the lock must name this SDK');
+                Assert::same(
+                    'tests/Cases/SurfaceCases.php',
+                    $lock['generatedBy'] ?? null,
+                    'the lock must name what produced it',
+                );
+                Assert::true(\is_array($lock['entries'] ?? null), 'the lock must carry an entries array');
+
+                /*
+                 * The lock on disk must be what the client is doing NOW.
+                 *
+                 * Without this, a failure in the case above — which throws
+                 * before it writes — would leave a stale committed lock for
+                 * this case to compare happily against the manifest. Two
+                 * green-looking halves and a wrong client. Re-recording costs
+                 * a few milliseconds.
+                 */
+                $recorded = self::recordLockEntries();
+                // Compared as `ns.name => "VERB path"` rather than as whole
+                // arrays, so a stale lock reports the handful of rows that
+                // differ instead of dumping all 55.
+                $onDisk = self::routeMap($lock['entries']);
+                $now = self::routeMap($recorded);
+                foreach ($now as $key => $route) {
+                    Assert::same(
+                        $route,
+                        $onDisk[$key] ?? null,
+                        "the committed lock is stale for {$key}: re-run the suite somewhere writable "
+                        . 'and commit the result',
+                    );
+                }
+                Assert::same(
+                    array_keys($now),
+                    array_keys($onDisk),
+                    'the committed lock lists different methods than the client has: re-run the suite',
+                );
+
+                // Monorepo first, then a mirror's vendored copy at its root.
+                $manifestPath = \dirname(__DIR__, 3) . '/sdk-spec/surface.json';
+                if (!\is_file($manifestPath)) {
+                    $manifestPath = \dirname(__DIR__, 2) . '/sdk-spec/surface.json';
+                }
+                if (!is_file($manifestPath)) {
+                    throw new Skipped(
+                        'surface.json is not reachable from here (' . $manifestPath . '). Expected '
+                        . 'inside the monorepo; absent in a published package, where the lock is '
+                        . 'still regenerated and self-checked but has nothing to be compared against.',
+                    );
+                }
+                $manifest = json_decode((string) file_get_contents($manifestPath), true, 512, \JSON_THROW_ON_ERROR);
+                Assert::true(\is_array($manifest['entries'] ?? null), 'surface.json must carry an entries array');
+                Assert::same(
+                    ChatlyClient::DEFAULT_BASE_URL,
+                    $manifest['baseUrl'] ?? null,
+                    'this SDK\'s default base URL must be the manifest\'s',
+                );
+
+                $expected = self::routeMap($manifest['entries']);
+                $actual = self::routeMap($lock['entries']);
+
+                $missing = array_diff_key($expected, $actual);
+                Assert::same(
+                    [],
+                    $missing,
+                    'in surface.json but not implemented here: ' . implode(', ', array_keys($missing)),
+                );
+                $extra = array_diff_key($actual, $expected);
+                Assert::same(
+                    [],
+                    $extra,
+                    'implemented here but not in surface.json: ' . implode(', ', array_keys($extra)),
+                );
+                foreach ($expected as $key => $route) {
+                    Assert::same($route, $actual[$key], "the route recorded for {$key}");
+                }
+                Assert::same(\count($expected), \count($actual), 'the manifest and the lock must be the same size');
+            },
+
+            'surface: the lock is sorted by ns then name' => static function (): void {
+                $lockPath = \dirname(__DIR__, 2) . '/' . self::LOCK_FILE;
+                $lock = json_decode((string) file_get_contents($lockPath), true, 512, \JSON_THROW_ON_ERROR);
+
+                $order = array_map(
+                    static fn (array $e): array => [$e['ns'], $e['name']],
+                    $lock['entries'],
+                );
+                $sorted = $order;
+                usort($sorted, static fn (array $a, array $b): int => $a <=> $b);
+                Assert::same(
+                    $sorted,
+                    $order,
+                    'a stable order keeps the committed lock\'s diffs readable',
+                );
+            },
+
+            'surface: no method is offered for a route an API key cannot reach' => static function (): void {
+                /*
+                 * Shipping a method that always fails is worse than not
+                 * shipping it: the failure arrives at runtime, in production,
+                 * in someone else's integration. A reaction records WHO
+                 * reacted and a key is not a person; channel writes need
+                 * `channels:write`, which no key-accessible route grants.
+                 */
+                $client = new ChatlyClient('ck_test', transport: new FakeTransport());
+                $forbidden = [
+                    ['conversations', 'react'],
+                    ['conversations', 'addReaction'],
+                    ['conversations', 'reactions'],
+                    ['channels', 'create'],
+                    ['channels', 'update'],
+                    ['channels', 'delete'],
+                    ['contacts', 'block'],
+                    ['workspace', 'teams'],
+                    ['workspace', 'agents'],
+                ];
+                foreach ($forbidden as [$namespace, $method]) {
+                    Assert::false(
+                        method_exists($client->{$namespace}, $method),
+                        "{$namespace}->{$method}() must not exist: that route refuses an API key",
+                    );
+                }
+            },
+        ];
+    }
+}
