@@ -35,7 +35,7 @@ foreach ($chatly->conversations->autoList(['limit' => 50]) as $conversation) {
 ```
 
 That is the whole setup. The base URL defaults to `https://api.chatlychat.com`
-and you only override it if you self-host.
+and you only override it to reach another Chatly environment or a test server.
 
 ## This is a BACKEND SDK
 
@@ -83,16 +83,10 @@ $chatly = new ChatlyClient(
 | Argument | Default | Notes |
 | --- | --- | --- |
 | `apiKey` | — | Required. An empty or whitespace-only key throws `InvalidArgumentException` immediately, not on the first call. |
-| `baseUrl` | `https://api.chatlychat.com` | Only for self-hosting. `null` **and `''`** both mean the default, so an unset `CHATLY_API_URL` lands on production rather than nowhere. A non-`http(s)` URL throws. |
+| `baseUrl` | `https://api.chatlychat.com` | Another Chatly environment, or a test server; it is also the second positional argument. `null` **and `''`** both mean the default, so an unset `CHATLY_API_URL` lands on production rather than nowhere. A non-`http(s)` URL throws. |
 | `timeout` | `15.0` | Seconds allowed per attempt, not per call. Three attempts can take three times this. |
 | `retries` | 3 attempts | See [Retries](#retries). `RetryPolicy::none()` turns it off. |
 | `transport` | `Chatly\Transport` (curl) | Any `Chatly\TransportInterface`. |
-
-### Self-hosting
-
-```php
-$chatly = new ChatlyClient($key, 'https://chat.acme.internal');
-```
 
 ### Using your own HTTP stack
 
@@ -422,10 +416,11 @@ Three things worth knowing:
   with 400 and the code `validation_failed`, not 422. Both land in the same
   class because they are the same branch for you; `getStatus()` still tells
   you which arrived.
-- **`getRequestId()` is normally `null`.** The API's own reference states it
-  neither reads nor emits `X-Request-Id`. The SDK reads the header because a
-  proxy in front of a self-hosted install may add one. To correlate a call
-  with your logs, key on the idempotency key you sent — see below.
+- **`getRequestId()` is the API's own request id.** The API mints one per
+  request and sends `x-request-id` on every response, errors included, so it
+  is normally present. Quote it in a support ticket — it finds the exact
+  request in our logs. Send your own `x-request-id` and the API reuses that
+  value, which is the cheaper way to correlate a call with your own logs.
 - **A 404 is also what a cross-workspace id looks like.** Row-level security
   scopes every read to your key's workspace, so another tenant's id is
   indistinguishable from a deleted one.
