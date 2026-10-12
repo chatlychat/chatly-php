@@ -147,21 +147,50 @@ final class Contacts extends AbstractResource
     }
 
     /**
-     * `GET /v1/contacts/{id}/journey` — one contact's timeline.
+     * `GET /v1/contacts/{id}/journey` — one page of a contact's timeline.
      *
-     * Merges CDP events, conversations and contact changes into one stream.
-     *
-     * Not exposed as an `auto…()` walk, deliberately: its `cursor` is an
-     * ISO-8601 timestamp rather than the opaque keyset cursor the list
-     * endpoints use, so it is not the same pagination and pretending
-     * otherwise would hide that.
+     * Merges CDP events, conversations and contact changes into one stream,
+     * newest first. Returns the whole `{items, nextCursor}` envelope.
      *
      * @param array<string,mixed> $query `days` (1–365, default 90), `limit`
-     *                                   (1–100, default 25), `cursor` (an
-     *                                   ISO-8601 datetime with offset).
+     *                                   (1–100, default 25), `cursor`.
      */
     public function journey(string $id, array $query = []): mixed
     {
         return $this->client->request('GET', '/v1/contacts/' . self::seg($id) . '/journey', $query);
+    }
+
+    /**
+     * The whole timeline, across pages.
+     *
+     * ─── THE CURSOR IS AN INSTANT, AND IT IS STILL A CURSOR ───────────────
+     *
+     * `nextCursor` here is the `occurredAt` of the last item returned — an
+     * ISO-8601 timestamp, not the opaque base64 keyset the list endpoints
+     * hand back (`journeyQuerySchema` declares
+     * `cursor: z.string().datetime({ offset: true })`, and the service reads
+     * `< cursor` to advance strictly into older items).
+     *
+     * **Walk it; never construct one.** A timestamp you picked is not a
+     * cursor: it skips every item that shares a boundary instant, and an
+     * offset the schema will not parse is a 400. Pass it back exactly as
+     * received, which is what this does — including the percent-encoding a
+     * `+00:00` offset needs, since a bare `+` in a query string decodes to a
+     * space and the datetime parse then fails.
+     *
+     * ```php
+     * foreach ($chatly->contacts->autoJourney($contactId, ['days' => 365]) as $moment) {
+     *     echo $moment['occurredAt'], ' ', $moment['kind'] ?? '', PHP_EOL;
+     * }
+     * ```
+     *
+     * @param array<string,mixed> $query    As {@see journey()}.
+     * @param int|null            $maxPages Stop early. Null walks to the end.
+     *
+     * @return \Generator<int,mixed>
+     */
+    public function autoJourney(string $id, array $query = [], ?int $maxPages = null): \Generator
+    {
+        yield from $this->httpWalk('/v1/contacts/' . self::seg($id) . '/journey', $query, $maxPages);
     }
 }

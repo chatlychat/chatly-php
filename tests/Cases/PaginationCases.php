@@ -208,11 +208,18 @@ final class PaginationCases
                  * because rows fell out of a parse is the bug this guards
                  * against, and it looks identical to a count that shrinks for
                  * a good reason unless somebody writes down which happened.
+                 *
+                 * It then went 7 -> 10: `contacts.journey`,
+                 * `conversations.unattended` and `search.query` answer real
+                 * `{ items, nextCursor }` envelopes and had never been
+                 * flagged. So the flag has now been wrong in both directions,
+                 * and neither time was a parse failure. Check that
+                 * `surface.json` parses before believing the next change.
                  */
                 Assert::same(
-                    7,
+                    10,
                     \count(SurfaceCases::PAGED),
-                    'the manifest carries 7 paged entries',
+                    'the manifest carries 10 paged entries',
                 );
 
                 $manifestPath = \dirname(__DIR__, 3) . '/sdk-spec/surface.json';
@@ -243,6 +250,9 @@ final class PaginationCases
                     ['conversations', 'autoMessages', ['conv_1'], '/v1/conversations/conv_1/messages'],
                     ['tickets', 'autoList', [], '/v1/tickets'],
                     ['kb', 'autoArticles', [], '/v1/kb/articles'],
+                    ['contacts', 'autoJourney', ['ct_1'], '/v1/contacts/ct_1/journey'],
+                    ['conversations', 'autoUnattended', [], '/v1/conversations/unattended'],
+                    ['search', 'autoQuery', ['refund'], '/v1/search'],
                     ['events', 'autoList', [], '/v1/cdp/events'],
                     ['webhooks', 'autoDeliveries', [], '/v1/webhooks/deliveries'],
                 ];

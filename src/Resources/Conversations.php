@@ -106,15 +106,41 @@ final class Conversations extends AbstractResource
     }
 
     /**
-     * `GET /v1/conversations/unattended` — threads waiting on a human.
+     * `GET /v1/conversations/unattended` — one page of the triage queue:
+     * open threads no human agent has replied to yet.
      *
-     * A fixed-shape read, not a paginated list.
+     * ─── RETURNS THE WHOLE ENVELOPE, BECAUSE OF `total` ───────────────────
      *
-     * @param array<string,mixed> $query
+     * `{ items, nextCursor, total }`. **`total` is the badge, and it is not
+     * `count($items)`** — a page of 25 saturates at 25 and then reads as
+     * "25 unattended" no matter how bad the backlog gets. That is the API's
+     * own stated reason for sending it, so this returns the envelope rather
+     * than burying the number one level down.
+     *
+     * @param array<string,mixed> $query `assignee`, `team`, `channel`,
+     *                                   `olderThanMinutes`, `cursor`,
+     *                                   `limit`. A stale `assignee` or `team`
+     *                                   id narrows to nothing rather than
+     *                                   400ing, so a saved link keeps working.
      */
     public function unattended(array $query = []): mixed
     {
         return $this->httpGet('/v1/conversations/unattended', $query);
+    }
+
+    /**
+     * Every unattended thread, across pages.
+     *
+     * Yields conversations. `total` lives on the single-page form — see
+     * {@see unattended()} for why that number is not the length of anything.
+     *
+     * @param array<string,mixed> $query As {@see unattended()}.
+     *
+     * @return \Generator<int,mixed>
+     */
+    public function autoUnattended(array $query = [], ?int $maxPages = null): \Generator
+    {
+        yield from $this->httpWalk('/v1/conversations/unattended', $query, $maxPages);
     }
 
     /**

@@ -53,22 +53,35 @@ final class SurfaceCases
     /**
      * The `ns.name` of every manifest entry marked `paged: true`.
      *
-     * SEVEN, not eight. `macros.list` was listed as paged for a day and is
-     * not: its handler is `@PaginationExempt` and returns a bare array capped
-     * at 200 rows, ordered by usage rank. It left this set because the ROUTE
-     * is pagination-exempt — not because a parser stopped recognising it,
-     * which is the other reason a count like this shrinks and the one that
-     * would be a bug.
+     * TEN, and it has been both 8 and 7 — the manifest's `paged` flag was
+     * wrong in both directions and the history is the point.
+     *
+     * It read 8 and included `macros.list`, whose handler is
+     * `@PaginationExempt` and returns a bare array capped at 200 rows ordered
+     * by usage rank. That came out: 7. Then `contacts.journey`,
+     * `conversations.unattended` and `search.query` were found to answer real
+     * `{ items, nextCursor }` envelopes while unflagged, and went in: 10.
+     *
+     * Both moves were on evidence from the handlers — `JourneyResponse` and
+     * `unattendedPageSchema` (which also carries a `total`) and
+     * `SearchResponse` (which carries `tier` and `facets` beside the hits).
+     * Neither was a parser shrinking the audited set, which is the other
+     * reason a count like this changes and the one that would be a bug. If it
+     * drops again, check that `surface.json` parses before believing a route
+     * stopped paginating.
      *
      * Used for two things: deciding what the fake transport answers each
      * route with, and as an anti-vacuity floor in {@see PaginationCases}.
      */
     public const PAGED = [
         'contacts.list',
+        'contacts.journey',
         'conversations.list',
         'conversations.messages',
+        'conversations.unattended',
         'tickets.list',
         'kb.articles',
+        'search.query',
         'events.list',
         'webhooks.deliveries',
     ];
