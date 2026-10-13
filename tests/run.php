@@ -92,7 +92,8 @@ if ($filter === null) {
         echo '  FAIL  ' . $problem . "\n";
     }
     if ($coverageProblems === []) {
-        echo '  ok    all 9 items of CONTRACT.md §10 have at least one case' . "\n";
+        echo '  ok    all ' . \count(Suite::contractCoverage())
+            . ' items of CONTRACT.md §10 have at least one case' . "\n";
     }
 }
 

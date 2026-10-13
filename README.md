@@ -537,11 +537,22 @@ foreach ($chatly->contacts->autoList(['limit' => 100]) as $contact) {
 foreach ($chatly->tickets->autoList([], maxPages: 3) as $ticket) { /* … */ }
 ```
 
-`autoList`, `autoMessages`, `autoArticles`, `autoDeliveries` — one per paged
-route, and there are seven of those. `macros->list()` is **not** one of them:
-that route is pagination-exempt and returns a plain array. It stops on a null cursor, and it stops if the server ever hands back a
+`autoList`, `autoJourney`, `autoMessages`, `autoUnattended`, `autoArticles`,
+`autoQuery`, `autoDeliveries` — one per paged route, and there are **ten** of
+those. `macros->list()` is **not** one of them: that route is
+pagination-exempt and returns a plain array.
+
+A walk stops on a null cursor, and it stops if the server ever hands back a
 cursor it has already followed, so a server-side bug becomes a truncated
 result rather than an infinite loop inside your `foreach`.
+
+It also stops **loudly** if a paged route answers with something that is not
+a page. A bare JSON array, or an object with no `items`, raises a
+`ChatlyException` with code `unexpected_response_shape` rather than being read
+as a single cursorless page — because that reading makes a truncated result
+indistinguishable from a complete one, and it is what one of the other
+language clients shipped. To read a genuinely unpaginated route through the
+same interface, say so with `Page::fromList($rows)`.
 
 > **Never sort or page on `id`.** Ids in this product are a mix of UUID v4 and
 > v7, so `id` order is not time order. The cursor is the only correct
@@ -730,7 +741,10 @@ public function request(
   `POST`/`PUT`/`PATCH` is sent as `{}`.
 - Interpolate ids into `$path` yourself, with `rawurlencode()`.
 - `$headers` override the SDK's own, the auth header included.
-- Need a page object from it? `Chatly\Pagination\Page::fromDecoded($result)`.
+- Need a page object from it? `Chatly\Pagination\Page::fromDecoded($result)`
+  for a `{items, nextCursor}` envelope — it raises
+  `unexpected_response_shape` on anything else — or
+  `Page::fromList($result)` for a route that is deliberately unpaginated.
 
 To replace the whole transport — for recording, for a test double, for an
 HTTP stack we have never heard of — implement `Chatly\TransportInterface`:

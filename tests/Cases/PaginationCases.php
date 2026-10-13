@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Chatly\Tests\Cases;
 
 use Chatly\ChatlyClient;
+use Chatly\Errors\ChatlyException;
 use Chatly\Pagination\Page;
 use Chatly\Pagination\Paginator;
 use Chatly\Tests\Assert;
@@ -90,7 +91,7 @@ final class PaginationCases
                 Assert::true($page->isLastPage(), 'and the page knows it is the last');
             },
 
-            '§5 a bare JSON array becomes a single page' => static function (): void {
+            '§5 an unpaginated route returns its bare array, and reading one AS a page is explicit' => static function (): void {
                 $transport = new FakeTransport();
                 // `GET /v1/kb/collections`, `/v1/channels` and `/v1/labels`
                 // are deliberately unpaginated and return a plain list.
@@ -98,10 +99,24 @@ final class PaginationCases
                 $collections = self::client($transport)->kb->collections();
 
                 Assert::same(2, \count($collections), 'the array comes back as given');
+                Assert::false($collections instanceof Page, 'and is not wrapped in a page');
 
-                $page = Page::fromDecoded([['id' => 'col_1']]);
-                Assert::same(1, \count($page->items), 'and reading one as a page yields its rows');
+                /*
+                 * `fromDecoded` used to accept a bare array and hand back a
+                 * single cursorless page. It no longer does — see below for
+                 * why that tolerance was a bug — so wanting a page over an
+                 * unpaginated route is now something you say out loud.
+                 */
+                $page = Page::fromList([['id' => 'col_1']]);
+                Assert::same(1, \count($page->items), 'fromList yields its rows');
                 Assert::same(null, $page->nextCursor, 'with no next page');
+                Assert::true($page->isLastPage(), 'and knows it is the last — honest, on a route with no cursor');
+
+                Assert::throws(
+                    \InvalidArgumentException::class,
+                    static fn () => Page::fromList(['id' => 'col_1']),
+                    'fromList must refuse a keyed array: an object is not an unpaginated collection',
+                );
             },
 
             '§5 a single page exposes items, cursor, hasMore and the raw body' => static function (): void {
@@ -197,7 +212,7 @@ final class PaginationCases
                 );
             },
 
-            '§5 the auto-walk set matches the manifest\'s paged entries, and there are 7' => static function (): void {
+            '§5 the auto-walk set matches the manifest\'s paged entries, and there are 10' => static function (): void {
                 /*
                  * An anti-vacuity floor on the list below.
                  *
@@ -240,6 +255,125 @@ final class PaginationCases
                     $paged,
                     $mine,
                     'the paged set here must be the manifest\'s, exactly',
+                );
+            },
+
+            '§10.10 every auto-paginator rejects a bare array where a page is expected' => static function (): void {
+                /*
+                 * ─── THE NEGATIVE DIRECTION, AND WHY IT IS THE REAL TEST ──
+                 *
+                 * The shape pass in SurfaceCases proves each method copes
+                 * with the shape its route actually sends. It CANNOT prove
+                 * the declaration matters: a decoder that ignored the body
+                 * entirely would pass it. This feeds every walker a bare
+                 * JSON array where it expects `{items, nextCursor}` and
+                 * requires it to fail loudly — which is the failure the real
+                 * API handed the .NET and Rust clients on `macros.list`.
+                 *
+                 * It found a bug here. `Page::fromDecoded` used to accept a
+                 * bare array and return a single page holding its rows, so
+                 * `contacts->autoList()` over a non-page body yielded one
+                 * page's worth of rows, reported a null cursor and stopped —
+                 * a truncated walk indistinguishable from a complete one,
+                 * with a 200 on it. The tolerance was documented as a
+                 * convenience for the unpaginated routes, but no method in
+                 * this SDK ever read one through `Page`, so the only bodies
+                 * it ever applied to were bodies the caller did not expect.
+                 * It is a `ChatlyException` now, code
+                 * `unexpected_response_shape`; `Page::fromList()` is the
+                 * deliberate way to wrap a plain list.
+                 */
+                $walkers = [
+                    'contacts.list' => ['contacts', 'autoList', []],
+                    'contacts.journey' => ['contacts', 'autoJourney', ['ct_1']],
+                    'conversations.list' => ['conversations', 'autoList', []],
+                    'conversations.messages' => ['conversations', 'autoMessages', ['conv_1']],
+                    'conversations.unattended' => ['conversations', 'autoUnattended', []],
+                    'tickets.list' => ['tickets', 'autoList', []],
+                    'kb.articles' => ['kb', 'autoArticles', []],
+                    'search.query' => ['search', 'autoQuery', ['refund']],
+                    'events.list' => ['events', 'autoList', []],
+                    'webhooks.deliveries' => ['webhooks', 'autoDeliveries', []],
+                ];
+
+                /*
+                 * The floor that stops this test quietly shrinking.
+                 *
+                 * Exactly the routes declared `page` — no more, so a walker
+                 * cannot be offered over a route with no cursor, and no
+                 * fewer, so dropping one from the list above does not look
+                 * like a pass.
+                 */
+                $exercised = array_keys($walkers);
+                sort($exercised);
+                Assert::same(
+                    ResponseShapes::withShape(ResponseShapes::PAGE),
+                    $exercised,
+                    'the walkers exercised here must be exactly the 10 routes declared `page`',
+                );
+                Assert::same(10, \count($walkers), 'and there are ten of them');
+
+                foreach ($walkers as $label => [$namespace, $method, $args]) {
+                    $transport = new FakeTransport();
+                    // A bare array, which is what `macros.list` really sends
+                    // and what a page route must never be read as.
+                    ResponseShapes::queue($transport, ResponseShapes::ARRAY_SHAPE);
+                    $client = self::client($transport);
+
+                    $error = Assert::throws(
+                        ChatlyException::class,
+                        static function () use ($client, $namespace, $method, $args): void {
+                            foreach ($client->{$namespace}->{$method}(...$args) as $_row) {
+                                // One row is enough: the decode happens
+                                // before the first yield, so if this body
+                                // executes at all the paginator accepted a
+                                // non-page body.
+                                break;
+                            }
+                        },
+                        "{$label}'s paginator accepted a bare array as a page instead of failing",
+                    );
+                    Assert::same(
+                        'unexpected_response_shape',
+                        $error instanceof ChatlyException ? $error->getErrorCode() : null,
+                        "{$label} must fail with a code a caller can branch on, not a bare message",
+                    );
+                    Assert::contains(
+                        'bare JSON array',
+                        $error->getMessage(),
+                        "{$label}'s error must say what arrived, so the reader knows it is the API and not them",
+                    );
+                    Assert::same(1, $transport->count(), "{$label} must fail on the first page, not keep walking");
+                }
+            },
+
+            '§5 a page body with no items list is refused too' => static function (): void {
+                /*
+                 * The other half of the same bug. An object with no `items`
+                 * was read as an EMPTY page, so a walk over it yielded
+                 * nothing and reported success — the exact wrong answer the
+                 * Rust client gave, arrived at from the opposite direction.
+                 */
+                foreach ([['id' => 'x_1'], [], ['items' => ['a' => 1]]] as $index => $body) {
+                    $transport = new FakeTransport();
+                    $transport->push(200, $body);
+                    $client = self::client($transport);
+
+                    $error = Assert::throws(
+                        ChatlyException::class,
+                        static fn () => iterator_to_array($client->contacts->autoList(), false),
+                        "body #{$index} is not a page and must not be read as an empty one",
+                    );
+                    Assert::contains('`items` list', $error->getMessage(), 'and the error says what was missing');
+                }
+
+                // A real empty page still works: `items` present, no cursor.
+                $transport = new FakeTransport();
+                $transport->push(200, ['items' => [], 'nextCursor' => null]);
+                Assert::same(
+                    [],
+                    iterator_to_array(self::client($transport)->contacts->autoList(), false),
+                    'an empty page is a legitimate answer and yields nothing without complaint',
                 );
             },
 

@@ -7,6 +7,39 @@ package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 `0.x` means the surface may still move. Pin a minor version if that matters to
 you.
 
+## [Unreleased]
+
+### Changed
+
+- **A paged route that answers with a non-page body is now an error.**
+  `Chatly\Pagination\Page::fromDecoded()` required a cursor envelope
+  (`items` as a list, inside a JSON object) and raises a `ChatlyException`
+  with code `unexpected_response_shape` on anything else — a bare JSON array
+  included. It used to accept a bare array and hand back a single cursorless
+  page, which turned a non-page body into a walk that stopped after one page
+  and reported success: a truncated result indistinguishable from a complete
+  one, with a 200 on it. No method in this SDK ever read an unpaginated route
+  through `Page`, so the tolerance only ever applied to bodies the caller did
+  not expect.
+
+### Added
+
+- **`Page::fromList()`** — the deliberate way to wrap a genuinely
+  unpaginated route's array (`/v1/kb/collections`, `/v1/channels`,
+  `/v1/labels`, `/v1/macros`) in a single page, now that `fromDecoded()`
+  refuses to guess.
+- **`shape` in `surface.lock.json`** — every entry carries the top-level
+  shape its decoder expects (`array`, `page`, `object`, `empty`), declared by
+  hand in `tests/Cases/ResponseShapes.php` from the API handlers' own
+  `@ZodResponse` schemas and **not** read from `surface.json`. The suite
+  feeds each method a fixture of its own declared shape — not one body for
+  all 55 — and asserts the value handed back really has it;
+  `scripts/check-sdk-surface-parity.mjs` diffs eight independently written
+  columns against the manifest.
+- Documentation fix: there are **ten** paged routes and ten `auto…()`
+  walkers, not seven. The count below was written when the manifest's `paged`
+  flag was wrong.
+
 ## [0.1.0] — 2026-10-12
 
 First release. The PHP implementation of the cross-language Chatly backend-SDK

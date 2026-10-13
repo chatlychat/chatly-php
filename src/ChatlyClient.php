@@ -298,6 +298,12 @@ final class ChatlyClient
     /**
      * One page of a list endpoint.
      *
+     * Throws a {@see ChatlyException} with code `unexpected_response_shape`
+     * if the route answers with anything but a cursor envelope — a bare array
+     * included. That is not pedantry: a non-page body silently read as a
+     * one-page result makes a truncated walk indistinguishable from a
+     * complete one.
+     *
      * @internal Resources call this. Use the resource methods, or
      *           {@see request()} plus {@see Page::fromDecoded()}.
      *
@@ -305,7 +311,9 @@ final class ChatlyClient
      */
     public function requestPage(string $path, array $query = []): Page
     {
-        return Page::fromDecoded($this->request('GET', $path, $query));
+        // The path goes in so the error names the route that misbehaved
+        // rather than just the shape.
+        return Page::fromDecoded($this->request('GET', $path, $query), $path);
     }
 
     /**

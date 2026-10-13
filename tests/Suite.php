@@ -9,6 +9,7 @@ use Chatly\Tests\Cases\ErrorCases;
 use Chatly\Tests\Cases\IdentityCases;
 use Chatly\Tests\Cases\PaginationCases;
 use Chatly\Tests\Cases\RequestCases;
+use Chatly\Tests\Cases\ResponseShapes;
 use Chatly\Tests\Cases\SurfaceCases;
 use Chatly\Tests\Cases\WebhookCases;
 
@@ -32,6 +33,15 @@ final class Suite
             'webhooks' => WebhookCases::cases(),
             'identity' => IdentityCases::cases(),
             'surface' => SurfaceCases::cases(),
+            /*
+             * The response-shape declaration tests ITSELF here.
+             *
+             * It is the fixture source for the surface pass, so a classifier
+             * that answered one word for everything, or a column that went
+             * flat, would make that pass vacuous without failing it. These
+             * cases are what stop that.
+             */
+            'shapes' => ResponseShapes::selfTestCases(),
         ];
 
         $flat = [];
@@ -49,7 +59,7 @@ final class Suite
     }
 
     /**
-     * The nine items of CONTRACT.md §10, and the case-name prefix that covers
+     * The ten items of CONTRACT.md §10, and the case-name prefix that covers
      * each.
      *
      * Checked by the runner, so dropping a case that covers a contract item
@@ -72,6 +82,7 @@ final class Suite
             '7. webhook signature accept/reject' => '§10.7',
             '8. identity-hash pinned vector' => '§10.8',
             '9. pinned webhook delivery vector' => '§10.9',
+            '10. response-shape lock, both directions' => '§10.10',
         ];
     }
 }

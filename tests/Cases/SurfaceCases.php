@@ -180,7 +180,13 @@ final class SurfaceCases
      * that ignores its argument and hard-codes an id rebuilds with that id in
      * the path and fails too. Nothing is normalised away.
      *
-     * @return array<int,array{ns:string,name:string,http:string,path:string}>
+     * It also records the top-level RESPONSE shape, by feeding each method the
+     * shape {@see ResponseShapes} declares for its route — one fixture per
+     * route, not one for all 55 — and asserting the value it hands back
+     * really has it. See that class for why the declaration is hand-written
+     * and not read from `surface.json`.
+     *
+     * @return array<int,array{ns:string,name:string,http:string,path:string,shape:string}>
      */
     private static function recordLockEntries(): array
     {
@@ -189,21 +195,20 @@ final class SurfaceCases
         foreach (self::surface() as [$namespace, $specName, $method, $verb, $template, $args]) {
             $label = $namespace . '.' . $specName;
 
-            $transport = new FakeTransport();
             /*
-             * The shape the ROUTE returns, not one shape for all 55.
+             * The shape THIS route answers with, not one shape for all 55.
              *
              * A fake that answers every route with `{items,nextCursor}` is
              * how the .NET and Rust clients shipped a decode error on
              * `GET /v1/macros` — which returns a bare array — with green
-             * suites. `PAGED` below is the manifest's own paged set; anything
-             * outside it is answered with a bare array here, so a method that
-             * insists on a page envelope fails in this suite rather than in
-             * somebody's production.
+             * suites. And a fake fed from the manifest's own `shape` column
+             * would be no better: it would agree with the manifest even when
+             * the manifest is wrong, which the `paged` flag was, in both
+             * directions, for months. The fixture comes from this package's
+             * own hand-written declaration.
              */
-            $transport->push(200, \in_array($label, self::PAGED, true)
-                ? ['items' => [], 'nextCursor' => null]
-                : []);
+            $shape = ResponseShapes::of($label);
+            $transport = ResponseShapes::queue(new FakeTransport(), $shape);
             $client = new ChatlyClient('ck_test', transport: $transport);
 
             $target = $namespace === 'root' ? $client : $client->{$namespace};
@@ -212,7 +217,35 @@ final class SurfaceCases
                 "{$label} must exist as " . ($namespace === 'root' ? '' : $namespace . '->') . $method . '()',
             );
 
-            $target->{$method}(...$args);
+            $value = $target->{$method}(...$args);
+
+            /*
+             * The value really has the declared shape.
+             *
+             * This is what catches a method that wraps or unwraps: a `list`
+             * handing back `$page->items` from a page route, or one reaching
+             * for `['items']` on a bare-array route, disagrees here even
+             * though the request it issued was perfect. `describe()` tells
+             * `array` from `object` with `array_is_list()` — `is_array()`
+             * cannot, because `json_decode(…, true)` collapses both into a
+             * PHP array, and a check that cannot fail is not a check.
+             */
+            Assert::same(
+                $shape,
+                ResponseShapes::describe($value),
+                "{$label} is declared `{$shape}` and its decoder must hand back one",
+            );
+            /*
+             * And the fixture's row survived the decode. A method that
+             * returned a constant, or dropped the body, has the right shape
+             * and the wrong content — `macros.delete` excepted, which has no
+             * body by definition.
+             */
+            Assert::same(
+                $shape === ResponseShapes::EMPTY_SHAPE ? null : ResponseShapes::SENTINEL_ROW,
+                ResponseShapes::sentinelIn($value, $shape),
+                "{$label} must hand back the row the API sent, not an invented one",
+            );
 
             Assert::same(1, $transport->count(), "{$label} must make exactly one request");
             Assert::same($verb, $transport->method(), "{$label} must be a {$verb}");
@@ -264,7 +297,14 @@ final class SurfaceCases
                 "{$label} issued {$transport->path()}, which normalises to {$path}, not {$template}",
             );
 
-            $entries[] = ['ns' => $namespace, 'name' => $specName, 'http' => $verb, 'path' => $path];
+            // Key order is the manifest's: ns, name, http, path, shape.
+            $entries[] = [
+                'ns' => $namespace,
+                'name' => $specName,
+                'http' => $verb,
+                'path' => $path,
+                'shape' => $shape,
+            ];
         }
 
         usort($entries, static function (array $a, array $b): int {
@@ -309,7 +349,13 @@ final class SurfaceCases
     }
 
     /**
-     * `ns.name => "VERB path"`, for readable comparisons.
+     * `ns.name => "VERB path → shape"`, for readable comparisons.
+     *
+     * The shape is folded into the same string rather than compared
+     * separately so that a disagreement about it reports the route it belongs
+     * to, in the same line as the verb and path — and so a comparison written
+     * before the shape existed cannot keep passing while ignoring it. It is
+     * the same wire format `scripts/check-sdk-surface-parity.mjs` builds.
      *
      * @param array<int,array<string,mixed>> $entries
      *
@@ -319,7 +365,9 @@ final class SurfaceCases
     {
         $map = [];
         foreach ($entries as $entry) {
-            $map[$entry['ns'] . '.' . $entry['name']] = $entry['http'] . ' ' . $entry['path'];
+            $shape = $entry['shape'] ?? null;
+            $map[$entry['ns'] . '.' . $entry['name']] = $entry['http'] . ' ' . $entry['path']
+                . ' → ' . (\is_string($shape) ? $shape : '(no shape)');
         }
         ksort($map);
 
@@ -339,6 +387,28 @@ final class SurfaceCases
                     \count($keys),
                     \count(array_unique($keys)),
                     'two rows claim the same ns.name',
+                );
+
+                /*
+                 * The RECORDED column, not just the declaration.
+                 *
+                 * ResponseShapes self-tests its own distribution; this
+                 * asserts the same of what actually reached the lock, so a
+                 * generator that flattened the field on the way out — or a
+                 * sweep that dropped it — fails here rather than shipping 55
+                 * identical values for the gate to accept.
+                 */
+                $recordedShapes = [];
+                foreach ($entries as $entry) {
+                    $recordedShapes[$entry['shape']] = ($recordedShapes[$entry['shape']] ?? 0) + 1;
+                }
+                ksort($recordedShapes);
+                $expectedShapes = ResponseShapes::EXPECTED_DISTRIBUTION;
+                ksort($expectedShapes);
+                Assert::same(
+                    $expectedShapes,
+                    $recordedShapes,
+                    'the shapes written to the lock must be the documented 14/10/30/1, all four present',
                 );
 
                 $lock = [
@@ -383,6 +453,29 @@ final class SurfaceCases
                     'the lock must name what produced it',
                 );
                 Assert::true(\is_array($lock['entries'] ?? null), 'the lock must carry an entries array');
+
+                /*
+                 * Field set AND order, per entry.
+                 *
+                 * The gate reads `shape` by name, so order is cosmetic to
+                 * it — but the lock is a committed cross-language artifact
+                 * that eight generators write, and eight different key
+                 * orders make its diffs unreadable. Asserted here because a
+                 * missing `shape` is the failure mode the gate reports as
+                 * "this SDK has not been through the shape pass".
+                 */
+                foreach ($lock['entries'] as $entry) {
+                    Assert::same(
+                        ['ns', 'name', 'http', 'path', 'shape'],
+                        array_keys($entry),
+                        'every lock entry carries exactly ns, name, http, path, shape — in that order',
+                    );
+                    Assert::true(
+                        \in_array($entry['shape'], ResponseShapes::ALL, true),
+                        $entry['ns'] . '.' . $entry['name'] . ' has shape "' . var_export($entry['shape'], true)
+                        . '", which is not one of the four',
+                    );
+                }
 
                 /*
                  * The lock on disk must be what the client is doing NOW.
