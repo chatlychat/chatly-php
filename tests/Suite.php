@@ -9,7 +9,7 @@ use Chatly\Tests\Cases\ErrorCases;
 use Chatly\Tests\Cases\IdentityCases;
 use Chatly\Tests\Cases\PaginationCases;
 use Chatly\Tests\Cases\RequestCases;
-use Chatly\Tests\Cases\ResponseShapes;
+use Chatly\Tests\Cases\ShapeSelfTestCases;
 use Chatly\Tests\Cases\SurfaceCases;
 use Chatly\Tests\Cases\WebhookCases;
 
@@ -34,14 +34,17 @@ final class Suite
             'identity' => IdentityCases::cases(),
             'surface' => SurfaceCases::cases(),
             /*
-             * The response-shape declaration tests ITSELF here.
+             * The response-shape declaration is tested here.
              *
              * It is the fixture source for the surface pass, so a classifier
              * that answered one word for everything, or a column that went
              * flat, would make that pass vacuous without failing it. These
-             * cases are what stop that.
+             * cases are what stop that. They live in their own class rather
+             * than on `ResponseShapes` itself — see that class's header for
+             * the split — so this registration is the only thing that knows
+             * where they are.
              */
-            'shapes' => ResponseShapes::selfTestCases(),
+            'shapes' => ShapeSelfTestCases::selfTestCases(),
         ];
 
         $flat = [];

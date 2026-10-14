@@ -193,4 +193,61 @@ final class Contacts extends AbstractResource
     {
         yield from $this->httpWalk('/v1/contacts/' . self::seg($id) . '/journey', $query, $maxPages);
     }
+
+    /**
+     * `GET /v1/contacts/{id}/mood` — weekly sentiment buckets for a contact.
+     *
+     * The window asked for is echoed back as `days`, so a chart can label its
+     * own axes from the response rather than from its own input. Read
+     * `sampleCount` first: a contact with two messages has a mood number that
+     * means nothing, and the endpoint reports the sample size rather than
+     * hiding it behind a confident average.
+     *
+     * @param array<string,mixed> $query `days`.
+     */
+    public function mood(string $id, array $query = []): mixed
+    {
+        return $this->client->request('GET', '/v1/contacts/' . self::seg($id) . '/mood', $query);
+    }
+
+    /**
+     * `POST /v1/contacts/{contactId}/cards` — fetch the live customer cards
+     * for this contact, by calling YOUR backends now.
+     *
+     * ─── A POST THAT READS, AND NEEDS ONLY `contacts:read` ────────────────
+     *
+     * It writes nothing. It is a POST because it takes a body, and it is
+     * `@NoIdempotency()` for the same reason — there is nothing to
+     * deduplicate. This SDK sends a key anyway, which is ignored. It answers
+     * **201**, which is Nest's POST default and not a claim that anything was
+     * created.
+     *
+     * Each configured card's url is called while you wait, so this is as slow
+     * as your slowest card and can report failures that are not ours.
+     * **`state` on an entry says why a card has no blocks** — timed out,
+     * refused, not configured for this contact — and an entry with no blocks
+     * and no state read is indistinguishable from a card that had nothing to
+     * say.
+     *
+     * One entry per configured card, capped at 25. Returns
+     * `{ cards: [...] }`, an object, not a bare array.
+     *
+     * @param string|null $conversationId Scope the cards to one conversation,
+     *                                    which is what the agent sidebar
+     *                                    does. Omitted sends no key at all —
+     *                                    the body is strict, so a null would
+     *                                    be a 400 rather than "no scope".
+     */
+    public function cards(string $contactId, ?string $conversationId = null): mixed
+    {
+        $body = [];
+        if ($conversationId !== null) {
+            $body['conversationId'] = $conversationId;
+        }
+
+        return $this->httpPost(
+            '/v1/contacts/' . self::seg($contactId, 'contactId') . '/cards',
+            $body,
+        );
+    }
 }

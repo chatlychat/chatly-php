@@ -40,7 +40,7 @@ use Chatly\Tests\FakeTransport;
  * **Change a value here only after reading the handler.** Not after reading
  * `surface.json`, and not because the gate complained.
  *
- * ─── FOUR ROWS LOOK WRONG AND ARE NOT ─────────────────────────────────────
+ * ─── THE ROWS THAT LOOK WRONG AND ARE NOT ─────────────────────────────────
  *
  *  * `contacts.remove_tag` is a `DELETE` that answers **200 with the
  *    surviving contact** — the same object the tag `POST` returns — not 204.
@@ -50,8 +50,15 @@ use Chatly\Tests\FakeTransport;
  *    and thrown away.
  *  * `macros.delete` is the ONLY real 204 on this surface.
  *  * `reports.agents` and `reports.conversations_by_day` are bare arrays —
- *    per-agent rows and per-day buckets, with no envelope around them — while
- *    the other two report routes are objects.
+ *    per-agent rows and per-day buckets, with no envelope around them — and
+ *    so are `reports.sources` and `reports.attribution`, while the other
+ *    nine report routes are objects. There is no pattern by name.
+ *  * `billing.invoices` PAGINATES and is still an `object`: its envelope is
+ *    `{ data, nextCursor }`, which predates the shared helper, so the key
+ *    this SDK's pager reads is simply not there.
+ *  * `docs_sources.discover` is a POST that answers a bare ARRAY.
+ *  * Six more DELETEs answer 200 with a body, so `macros.delete` remains the
+ *    only `empty` on the surface — see EXPECTED_DISTRIBUTION.
  *
  * ─── HOW `array` IS TOLD FROM `object` IN PHP ─────────────────────────────
  *
@@ -68,7 +75,7 @@ use Chatly\Tests\FakeTransport;
  * key is an integer in sequence from 0, which no object on this surface is.
  * The one genuine collision is `{}` against `[]`, which both decode to `[]`
  * — so the fixtures below are deliberately NON-EMPTY, and
- * {@see selfTestCases()} proves both halves of that: the classifier splits
+ * {@see ShapeSelfTestCases} proves both halves of that: the classifier splits
  * the two fixtures, and `is_array()` does not.
  */
 final class ResponseShapes
@@ -91,17 +98,27 @@ final class ResponseShapes
     /**
      * The distribution, asserted so a flattened column cannot pass.
      *
-     * Counted from the 55 `@ZodResponse` schemas on 2026-10-12. A column that
-     * said `object` 55 times would satisfy every other assertion in this
-     * suite and be worthless, which is the only reason these numbers are
-     * written down. If the surface grows they change — but all four values
-     * must stay represented, and `empty` must stay at exactly one until a
-     * second genuine 204 ships.
+     * Counted from the 162 `@ZodResponse` schemas — 55 on 2026-10-12, 104 more
+     * on 2026-10-14, then 3 the same day. Each was read off its handler. A
+     * column that said `object` 162 times would satisfy every other
+     * assertion in this suite and be worthless, which is the only reason
+     * these numbers are written down. If the surface grows they change — but
+     * all four values must stay represented, and `empty` must stay at exactly
+     * one until a second genuine 204 ships.
+     *
+     * It was 14/10/30/1 at 55 routes. The 104 added 18 arrays, 3 pages and 83
+     * objects; the last 3 added `workspace.mine` (array), `root.me` and
+     * `webhooks.delete` (objects). No addition has ever been `empty`: nothing
+     * else on this surface is a real 204, and SIX routes that look like one
+     * are not — `ai.delete_tool` and `bot_routes.delete` answer
+     * `{ deleted: true }`, `triggers.delete` and `webhooks.delete` answer
+     * `{ ok: true }`, `brands.delete` answers `{ id }` on a soft delete, and
+     * `email_templates.delete` answers `{ restored }`.
      */
     public const EXPECTED_DISTRIBUTION = [
-        self::ARRAY_SHAPE => 14,
-        self::PAGE => 10,
-        self::OBJECT => 30,
+        self::ARRAY_SHAPE => 33,
+        self::PAGE => 13,
+        self::OBJECT => 115,
         self::EMPTY_SHAPE => 1,
     ];
 
@@ -116,7 +133,7 @@ final class ResponseShapes
     public const SENTINEL_ROW = ['id' => 'x_1'];
 
     /**
-     * `ns.name => shape`, for all 55 routes.
+     * `ns.name => shape`, for all 162 routes.
      *
      * @return array<string,string>
      */
@@ -124,6 +141,10 @@ final class ResponseShapes
     {
         return [
             'root.whoami' => self::OBJECT,
+            // `z.discriminatedUnion('principal', [...])` over two OBJECT
+            // members — a union of objects is still `object`, not a fifth
+            // shape, the same reading `bots.create` gets.
+            'root.me' => self::OBJECT,
 
             'contacts.list' => self::PAGE,
             'contacts.get' => self::OBJECT,
@@ -199,6 +220,211 @@ final class ResponseShapes
             'workspace.inboxes' => self::ARRAY_SHAPE,
             'workspace.team_members' => self::ARRAY_SHAPE,
             'workspace.agent_skills' => self::OBJECT,
+            // `z.array(z.object({ value, group }))`, built from the shared
+            // `API_KEY_SCOPES` constant rather than a copy of it.
+            'workspace.key_scopes' => self::ARRAY_SHAPE,
+            // `{ items, total, truncated }` — an object BECAUSE `truncated`
+            // has to go somewhere, and no cursor because nine heterogeneous
+            // sources share no sort key.
+            'workspace.secrets' => self::OBJECT,
+            // `z.array(workspaceListItemSchema)`. It stays a bare array for a
+            // key rather than collapsing to the one row it holds — the route
+            // is the cross-workspace one and a key is a short list.
+            'workspace.mine' => self::ARRAY_SHAPE,
+
+            'contacts.mood' => self::OBJECT,
+            // `{ cards: [...] }` — an object wrapping the list.
+            'contacts.cards' => self::OBJECT,
+
+            'conversations.unread_counts' => self::OBJECT,
+            // `{ items }` and NOTHING ELSE — no `nextCursor`, so an object.
+            // The exact body `describe()`'s items-without-a-cursor branch
+            // exists to classify correctly.
+            'conversations.linked' => self::OBJECT,
+            // `{ conversationId, items }` — also not a page.
+            'conversations.outcomes' => self::OBJECT,
+            'conversations.record_outcome' => self::OBJECT,
+            'conversations.return_to_bot' => self::OBJECT,
+            'conversations.update_blocks' => self::OBJECT,
+
+            // `z.array(...)`. Nullable fields on the rows, because the query
+            // LEFT joins conversations — but the top level is a bare array.
+            'tickets.conversations' => self::ARRAY_SHAPE,
+            // `{ openTickets }` — one integer, wrapped.
+            'tickets.open_count' => self::OBJECT,
+            // `{ items, totalMinutes, billableMinutes }` — an `items` key
+            // with no cursor beside it, so an object and not a page.
+            'tickets.time' => self::OBJECT,
+            'tickets.status_history' => self::OBJECT,
+            // An IIFE that returns a `z.object`; the refs inside it are not
+            // the top level.
+            'tickets.lineage' => self::OBJECT,
+
+            'macros.get' => self::OBJECT,
+            // `{ limit, actions }`.
+            'macros.actions' => self::OBJECT,
+            // `{ items, total }` — reads like a list, is an OBJECT. `total`
+            // is `count($items)` over a frozen catalogue and is not a hint at
+            // a second page; there is no cursor.
+            'macros.templates' => self::OBJECT,
+            'macros.template' => self::OBJECT,
+
+            // `z.array(endpointListItemSchema)`.
+            'webhooks.list' => self::ARRAY_SHAPE,
+            'webhooks.create' => self::OBJECT,
+            // `{ eventTypes: [...] }` — wrapped, not bare.
+            'webhooks.events' => self::OBJECT,
+            // `{ latest, versions }`.
+            'webhooks.schema_versions' => self::OBJECT,
+            'webhooks.set_schema_version' => self::OBJECT,
+            // `z.object({ ok: z.literal(true) })` with no `@HttpCode(204)`:
+            // a DELETE that answers 200 with a body, like five others here.
+            'webhooks.delete' => self::OBJECT,
+
+            // Bare arrays, both, and both say so in their own
+            // `@ZodResponse` description in capitals — `sources` because the
+            // channel enum bounds it, `attribution` because the tail beyond
+            // the row cap is summed into one row.
+            'reports.sources' => self::ARRAY_SHAPE,
+            'reports.attribution' => self::ARRAY_SHAPE,
+            // And the rest are objects. There is no pattern by name: these
+            // four carry an echoed window or a cap count, which is why.
+            'reports.cohorts' => self::OBJECT,
+            'reports.response_times' => self::OBJECT,
+            'reports.teams' => self::OBJECT,
+            'reports.labels' => self::OBJECT,
+            'reports.voice' => self::OBJECT,
+            'reports.themes' => self::OBJECT,
+            'reports.theme_conversations' => self::OBJECT,
+
+            // `z.array(z.string())` — the ONLY route on this surface whose
+            // array holds scalars rather than objects. Still `array`: the
+            // declaration is about the TOP LEVEL.
+            'channels.adapters' => self::ARRAY_SHAPE,
+            'channels.create' => self::OBJECT,
+            'channels.update' => self::OBJECT,
+            'channels.rotate_secret' => self::OBJECT,
+
+            'billing.summary' => self::OBJECT,
+            // `{ data, nextCursor }` — it PAGINATES and it is still an
+            // `object`, because the envelope predates the shared helper and
+            // uses `data` where every page route uses `items`. Classifying
+            // it `page` would hand this SDK's pager a body it cannot read;
+            // see Billing::invoices() for why there is no walker.
+            'billing.invoices' => self::OBJECT,
+            'billing.usage_monthly' => self::OBJECT,
+            'billing.usage_daily' => self::OBJECT,
+
+            // `{ providers: [...] }` — wrapped. The registry, not the
+            // configured subset.
+            'ai.providers' => self::OBJECT,
+            'ai.add_provider' => self::OBJECT,
+            'ai.test_provider' => self::OBJECT,
+            'ai.quota' => self::OBJECT,
+            // `toneRuleListResponseSchema` is `z.array(...)`, and BOTH the
+            // GET and the PUT answer with it — the write re-reads the set and
+            // returns the same bare array, which is unusual enough for the
+            // handler's own description to say "Same bare array as GET".
+            'ai.tone' => self::ARRAY_SHAPE,
+            'ai.set_tone' => self::ARRAY_SHAPE,
+            // `{ instruction }`, where an EMPTY string is the normal answer.
+            'ai.tone_preview' => self::OBJECT,
+            'ai.generate_tone' => self::OBJECT,
+            // `z.array(toolResponseSchema)`.
+            'ai.tools' => self::ARRAY_SHAPE,
+            'ai.create_tool' => self::OBJECT,
+            'ai.update_tool' => self::OBJECT,
+            // `{ deleted: true }` with a 200 — NOT a 204. `macros.delete` is
+            // still the only real 204 on this surface.
+            'ai.delete_tool' => self::OBJECT,
+
+            // `botsPageSchema` / `agentDeliveriesPageSchema` —
+            // `{ items, nextCursor, hasMore }`, both of them.
+            'bots.list' => self::PAGE,
+            'bots.deliveries' => self::PAGE,
+            'bots.get' => self::OBJECT,
+            // `z.union([createdExternalAgentSchema, botDtoSchema])` — a union
+            // of two OBJECTS, so object. A union is not a fifth shape.
+            'bots.create' => self::OBJECT,
+            'bots.update' => self::OBJECT,
+            'bots.update_external' => self::OBJECT,
+            'bots.rotate_external_secret' => self::OBJECT,
+            // `agentDeliveryItemSchema.extend({ payload })`.
+            'bots.delivery' => self::OBJECT,
+            'bots.redeliver' => self::OBJECT,
+            'bots.test_delivery' => self::OBJECT,
+            'bots.analytics' => self::OBJECT,
+
+            // `z.array(routeResponseSchema)`, in evaluation order.
+            'bot_routes.list' => self::ARRAY_SHAPE,
+            // `{ fields: [...] }` — wrapped.
+            'bot_routes.fields' => self::OBJECT,
+            'bot_routes.create' => self::OBJECT,
+            'bot_routes.update' => self::OBJECT,
+            // `{ deleted: true }`, a 200 with a body.
+            'bot_routes.delete' => self::OBJECT,
+            'bot_routes.resolve' => self::OBJECT,
+
+            // `brandListSchema` is `z.array(brandDtoSchema.extend(...))`.
+            'brands.list' => self::ARRAY_SHAPE,
+            'brands.create' => self::OBJECT,
+            'brands.update' => self::OBJECT,
+            // A third DELETE that answers 200 with a body: `{ id }`. It is a
+            // SOFT delete, which is why there is something to say.
+            'brands.delete' => self::OBJECT,
+
+            // `triggersPageSchema` — `{ items, nextCursor, hasMore }`.
+            'triggers.list' => self::PAGE,
+            'triggers.create' => self::OBJECT,
+            // `{ ok: true }` with a 200, on a HARD delete.
+            'triggers.delete' => self::OBJECT,
+
+            'canvas_steps.get' => self::OBJECT,
+            'canvas_steps.resolve' => self::OBJECT,
+
+            // `z.array(customerCardViewSchema)` — header names, no values.
+            'customer_cards.list' => self::ARRAY_SHAPE,
+            'customer_cards.create' => self::OBJECT,
+            'customer_cards.update' => self::OBJECT,
+            'customer_cards.rotate_secret' => self::OBJECT,
+            'customer_cards.delete' => self::OBJECT,
+
+            // `z.array(customerCardEndpointViewSchema)` — its own description
+            // calls it "a bare array".
+            'customer_card_endpoints.list' => self::ARRAY_SHAPE,
+            'customer_card_endpoints.create' => self::OBJECT,
+            'customer_card_endpoints.rotate_secret' => self::OBJECT,
+            'customer_card_endpoints.activate_secret' => self::OBJECT,
+            'customer_card_endpoints.delete' => self::OBJECT,
+
+            // Three bare arrays in a row, all `z.array(...)`: the provider
+            // registry, the connected sources, and the discovered spaces.
+            // `discover` is a POST that answers one, which is the row most
+            // likely to be guessed `object` from the verb.
+            'docs_sources.providers' => self::ARRAY_SHAPE,
+            'docs_sources.list' => self::ARRAY_SHAPE,
+            'docs_sources.discover' => self::ARRAY_SHAPE,
+            'docs_sources.create' => self::OBJECT,
+            'docs_sources.update' => self::OBJECT,
+            'docs_sources.sync' => self::OBJECT,
+            'docs_sources.webhook' => self::OBJECT,
+            'docs_sources.delete' => self::OBJECT,
+
+            // `z.array(emailTemplateResponseSchema)` — all five kinds, the
+            // catalogue rather than the rows.
+            'email_templates.list' => self::ARRAY_SHAPE,
+            'email_templates.preview' => self::OBJECT,
+            'email_templates.update' => self::OBJECT,
+            // `{ restored }` with a 200. Its own description shouts "HAS A
+            // BODY, not a 204".
+            'email_templates.delete' => self::OBJECT,
+
+            // `z.array(knowledgeGapResponseSchema)`, most-asked first.
+            'knowledge_gaps.list' => self::ARRAY_SHAPE,
+            'knowledge_gaps.update' => self::OBJECT,
+            // `{ gap, articleId, reason }`, where `articleId` is nullable on
+            // the happy path.
+            'knowledge_gaps.draft' => self::OBJECT,
         ];
     }
 
@@ -334,140 +560,4 @@ final class ResponseShapes
         return \is_array($row) ? $row : null;
     }
 
-    /**
-     * Cases that prove {@see describe()} itself is not vacuous.
-     *
-     * A classifier is the kind of thing that passes 55 routes while answering
-     * the same word every time, so it gets its own tests — including the
-     * negative one that `is_array()`, the obvious implementation, would have
-     * made the whole pass meaningless.
-     *
-     * @return array<string,\Closure():void>
-     */
-    public static function selfTestCases(): array
-    {
-        return [
-            'shapes: the classifier splits array from object, which is_array() cannot' => static function (): void {
-                $asObject = json_decode('{"id":"x_1"}', true, 512, \JSON_THROW_ON_ERROR);
-                $asArray = json_decode('[{"id":"x_1"}]', true, 512, \JSON_THROW_ON_ERROR);
-
-                /*
-                 * The trap, stated as an assertion. `json_decode(…, true)`
-                 * gives the SAME PHP type for both, so a classifier built on
-                 * `is_array()` would answer one word for 54 of the 55 routes
-                 * and the whole shape pass would be theatre.
-                 */
-                Assert::true(\is_array($asObject), 'a JSON object decodes to a PHP array');
-                Assert::true(\is_array($asArray), 'and so does a JSON array — is_array() cannot tell them apart');
-
-                Assert::same(
-                    self::OBJECT,
-                    self::describe($asObject),
-                    'array_is_list() is false for an object with a string key',
-                );
-                Assert::same(
-                    self::ARRAY_SHAPE,
-                    self::describe($asArray),
-                    'and true for a JSON array, which always decodes to a list',
-                );
-            },
-
-            'shapes: every fixture classifies as the shape it was built for' => static function (): void {
-                foreach ([self::PAGE, self::ARRAY_SHAPE, self::OBJECT] as $shape) {
-                    // Round-tripped through JSON the way the client decodes
-                    // it, so the fixture is tested as bytes and not as the
-                    // PHP literal it was written as.
-                    $json = json_encode(self::body($shape), \JSON_THROW_ON_ERROR);
-                    $decoded = json_decode((string) $json, true, 512, \JSON_THROW_ON_ERROR);
-                    Assert::same($shape, self::describe($decoded), "the {$shape} fixture reads back as {$shape}");
-                    Assert::same(
-                        self::SENTINEL_ROW,
-                        self::sentinelIn($decoded, $shape),
-                        "the sentinel row is reachable in a {$shape}",
-                    );
-                }
-
-                Assert::same(self::EMPTY_SHAPE, self::describe(null), 'a 204 decodes to null, which is `empty`');
-                Assert::same(
-                    self::PAGE,
-                    self::describe(Page::fromDecoded(self::body(self::PAGE))),
-                    'and a typed Page is a page',
-                );
-            },
-
-            'shapes: an envelope without a cursor key is an object, not a page' => static function (): void {
-                /*
-                 * `page` means `items` AND `nextCursor`. An object that
-                 * happens to carry a field called `items` — a ticket with
-                 * line items, say — must not be mistaken for a page, or a
-                 * walker would be offered over something that cannot be
-                 * walked.
-                 */
-                Assert::same(
-                    self::OBJECT,
-                    self::describe(['id' => 't_1', 'items' => [['sku' => 'a']]]),
-                    'items without nextCursor is just an object with a list in it',
-                );
-                Assert::same(
-                    self::PAGE,
-                    self::describe(['items' => [], 'nextCursor' => null, 'total' => 9]),
-                    'and an empty page is still a page — `total` sits beside the envelope',
-                );
-                Assert::same(
-                    'scalar(string)',
-                    self::describe('x_1'),
-                    'a scalar body is named as one rather than silently counted as an object',
-                );
-            },
-
-            '§10.10 shapes: the declared column covers all 55 routes, with the documented distribution' => static function (): void {
-                $declared = self::declared();
-                Assert::same(55, \count($declared), 'one declaration per route on the shared surface');
-
-                foreach ($declared as $label => $shape) {
-                    Assert::true(
-                        \in_array($shape, self::ALL, true),
-                        "{$label} is declared \"{$shape}\", which is not one of the four shapes",
-                    );
-                }
-
-                $counts = array_fill_keys(self::ALL, 0);
-                foreach ($declared as $shape) {
-                    ++$counts[$shape];
-                }
-                /*
-                 * Anti-vacuity. See EXPECTED_DISTRIBUTION — a column that
-                 * said `object` 55 times satisfies every other assertion in
-                 * this suite, and unanimity about nothing is what this
-                 * catches.
-                 */
-                foreach (self::EXPECTED_DISTRIBUTION as $shape => $expected) {
-                    Assert::same($expected, $counts[$shape], "the surface carries {$expected} `{$shape}` routes");
-                }
-                Assert::same(
-                    array_keys(self::EXPECTED_DISTRIBUTION),
-                    array_keys(array_filter($counts, static fn (int $n): bool => $n > 0)),
-                    'all four shapes must stay represented',
-                );
-
-                /*
-                 * The two hand-written lists in this suite must agree.
-                 *
-                 * `SurfaceCases::PAGED` is the `paged` column — "this SDK
-                 * offers a walker here" — and this is the `shape` column.
-                 * They are two statements of one fact and were written
-                 * separately; the gate checks the same equivalence on the
-                 * manifest's side. A disagreement here is a typo in one of
-                 * them, caught before it reaches the lock.
-                 */
-                $paged = SurfaceCases::PAGED;
-                sort($paged);
-                Assert::same(
-                    $paged,
-                    self::withShape(self::PAGE),
-                    'the routes declared `page` must be exactly the ones this SDK offers a walker over',
-                );
-            },
-        ];
-    }
 }

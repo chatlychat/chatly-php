@@ -9,16 +9,27 @@ use Chatly\Errors\RateLimitException;
 use Chatly\Errors\TransportException;
 use Chatly\Pagination\Page;
 use Chatly\Pagination\Paginator;
+use Chatly\Resources\Ai;
 use Chatly\Resources\Billing;
+use Chatly\Resources\BotRoutes;
+use Chatly\Resources\Bots;
+use Chatly\Resources\Brands;
+use Chatly\Resources\CanvasSteps;
 use Chatly\Resources\Channels;
 use Chatly\Resources\Contacts;
 use Chatly\Resources\Conversations;
+use Chatly\Resources\CustomerCardEndpoints;
+use Chatly\Resources\CustomerCards;
+use Chatly\Resources\DocsSources;
+use Chatly\Resources\EmailTemplates;
 use Chatly\Resources\Events;
 use Chatly\Resources\Kb;
+use Chatly\Resources\KnowledgeGaps;
 use Chatly\Resources\Macros;
 use Chatly\Resources\Reports;
 use Chatly\Resources\Search;
 use Chatly\Resources\Tickets;
+use Chatly\Resources\Triggers;
 use Chatly\Resources\Webhooks as WebhookDeliveries;
 use Chatly\Resources\Workspace;
 
@@ -41,12 +52,25 @@ use Chatly\Resources\Workspace;
  *
  * ─── WHAT IS REACHABLE ────────────────────────────────────────────────────
  *
- * 140 of the API's 886 routes accept an API key; the rest answer a `ck_` key
+ * 174 of the API's 909 routes accept an API key; the rest answer a `ck_` key
  * with 403 because they need a signed-in person (a reaction records *who*
  * reacted, and a key is not a person). The namespaces on this class are the
- * 55 we hand-wrote methods for. Every other key-accessible route is reachable
- * through {@see request()} without abandoning auth, retries, idempotency and
- * typed errors.
+ * **162** we hand-wrote methods for — every entry in
+ * `packages/sdk-spec/surface.json`. Every other key-accessible route is
+ * reachable through {@see request()} without abandoning auth, retries,
+ * idempotency and typed errors.
+ *
+ * Those two numbers come from `node scripts/report-api-key-surface.mjs
+ * --json`, which is the one source for them: the five documentation pages
+ * that stated them by hand were all wrong, twice over. This docblock said
+ * "140 of 886" and "55" until the surface was completed, and both were as
+ * stale as the pages were.
+ *
+ * The 174 and the 162 are different counts of different things, and the gap
+ * is not slack: 12 routes accept a key and have no method here, because the
+ * manifest does not list them. Three of those were found while completing
+ * this SDK and have since been added — see {@see request()}. The manifest is
+ * where the rest get fixed, not this class.
  */
 final class ChatlyClient
 {
@@ -91,6 +115,27 @@ final class ChatlyClient
     public readonly Channels $channels;
     public readonly Billing $billing;
     public readonly Workspace $workspace;
+
+    /*
+     * ─── PROPERTY NAMES ARE camelCase; THE MANIFEST'S `ns` IS snake_case ──
+     *
+     * `bot_routes` in `surface.json` is `$chatly->botRoutes` here, per
+     * CONTRACT.md §9: "the language's own idiom wins over cross-language
+     * symmetry". `tests/Cases/SurfaceCases::property()` holds the one
+     * mapping, so the lock still records the manifest's own `ns` and the
+     * parity gate compares like with like.
+     */
+    public readonly Ai $ai;
+    public readonly Bots $bots;
+    public readonly BotRoutes $botRoutes;
+    public readonly Brands $brands;
+    public readonly CanvasSteps $canvasSteps;
+    public readonly CustomerCards $customerCards;
+    public readonly CustomerCardEndpoints $customerCardEndpoints;
+    public readonly DocsSources $docsSources;
+    public readonly EmailTemplates $emailTemplates;
+    public readonly KnowledgeGaps $knowledgeGaps;
+    public readonly Triggers $triggers;
 
     /**
      * @param string                  $apiKey    A workspace API key (`ck_…`). Required.
@@ -179,6 +224,17 @@ final class ChatlyClient
         $this->channels = new Channels($this);
         $this->billing = new Billing($this);
         $this->workspace = new Workspace($this);
+        $this->ai = new Ai($this);
+        $this->bots = new Bots($this);
+        $this->botRoutes = new BotRoutes($this);
+        $this->brands = new Brands($this);
+        $this->canvasSteps = new CanvasSteps($this);
+        $this->customerCards = new CustomerCards($this);
+        $this->customerCardEndpoints = new CustomerCardEndpoints($this);
+        $this->docsSources = new DocsSources($this);
+        $this->emailTemplates = new EmailTemplates($this);
+        $this->knowledgeGaps = new KnowledgeGaps($this);
+        $this->triggers = new Triggers($this);
     }
 
     /**
@@ -252,12 +308,57 @@ final class ChatlyClient
     }
 
     /**
+     * `GET /v1/me` — who is calling, whoever that is.
+     *
+     * ─── HOW THIS DIFFERS FROM {@see whoami()} ────────────────────────────
+     *
+     * Same answer, looser door, wider audience.
+     *
+     * The body is **discriminated on `principal`**. For a `ck_` key it is
+     * `principal: 'api_key'` carrying the same object `whoami()` returns —
+     * there is no user behind a key — and for a signed-in person it is
+     * `principal: 'user'` with their profile and active membership. So this
+     * is the route to call from code that might be handed either credential;
+     * `whoami()` is the one to call when you know it is a key.
+     *
+     * **It declares no permission at all**, which is the one way it is looser
+     * than `whoami()` (`workspace:read`). Deliberate: what a key learns here
+     * is its own workspace id and its own grant list — the two things it
+     * presented in order to ask — so requiring a scope could only withhold a
+     * credential's description from the credential itself, which is how an
+     * integrator ends up discovering their scopes by provoking 403s.
+     *
+     * That makes it **the liveness check to reach for**: a key with no useful
+     * scope still gets a 200, and that answer is true. `whoami()` would
+     * answer the same key with a 403 and tell you nothing about whether the
+     * key, the host or the network was the problem.
+     *
+     * It is also `@AllowWhenSuspended`, so it answers for a workspace
+     * suspended for non-payment. And it touches the database not at all on
+     * the key path.
+     */
+    public function me(): mixed
+    {
+        return $this->request('GET', '/v1/me');
+    }
+
+    /**
      * The escape hatch: call any route directly.
      *
-     * 85 of the 140 key-accessible routes have no typed method here. Without
+     * 12 of the 174 key-accessible routes have no typed method here. Without
      * this, reaching one means abandoning the SDK and hand-rolling HTTP with
      * a bearer token — and losing retries, idempotency and typed errors with
      * it. This goes through all of them.
+     *
+     * This paragraph named three routes as reachable ONLY here —
+     * `DELETE /v1/webhooks/{id}`, `GET /v1/me` and `GET /v1/workspaces/me`.
+     * Each was key-accessible and missing from the shared manifest; all three
+     * were added to it on 2026-10-14 and are now
+     * {@see \Chatly\Resources\Webhooks::delete()}, {@see me()} and
+     * {@see \Chatly\Resources\Workspace::mine()}. Fifteen became twelve, and
+     * the remaining twelve are manifest gaps rather than deliberate
+     * omissions — a method here would fail the cross-SDK parity gate, so the
+     * manifest is where they get closed.
      *
      * ```php
      * $chatly->request('GET', '/v1/tickets', ['filter[]' => ['status:open'], 'limit' => 50]);

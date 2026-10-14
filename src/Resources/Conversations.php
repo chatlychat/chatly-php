@@ -271,4 +271,155 @@ final class Conversations extends AbstractResource
             '/v1/conversations/scheduled-messages/' . self::seg($scheduledId, 'scheduledId'),
         );
     }
+
+    /**
+     * `GET /v1/conversations/unread-counts` — the inbox sidebar's badges.
+     *
+     * ─── PER-*USER*, AND AN API KEY IS NOT A USER ─────────────────────────
+     *
+     * The handler counts against `membership.userId`, which for a key is the
+     * linked MACHINE USER's id — or, for an unlinked key, the key's own id,
+     * which is not a `users.id` at all. So `mentions` and `participating`
+     * will be empty for an unlinked key: nobody can @-mention it. The
+     * workspace-wide numbers (`unread`, `unattended`) are still meaningful.
+     * If you want this to mean something, link the key to a machine user.
+     *
+     * ─── SUMMING THE FIELDS DOUBLE-COUNTS ─────────────────────────────────
+     *
+     * One object: four scalars plus three bucket arrays, and **NOT** a page
+     * or a bare array. `mentions`, `participating` and `unattended` are all
+     * SUBSETS of `unread`, so adding them together is wrong.
+     * `byLabel` is capped at 50 buckets ordered by count, so a workspace with
+     * more labels than that has a tail you cannot see from here.
+     *
+     * @param array<string,mixed> $query `brand`, to scope to one brand.
+     */
+    public function unreadCounts(array $query = []): mixed
+    {
+        return $this->httpGet('/v1/conversations/unread-counts', $query);
+    }
+
+    /**
+     * `GET /v1/conversations/{id}/linked` — threads merged into or linked
+     * with this one.
+     *
+     * `{ items: [...] }` — an object with a list in it, and **not a page**:
+     * there is no `nextCursor` and nothing to walk. A client that reads an
+     * `items` key as a cursor envelope is wrong about this route, which is
+     * the exact confusion this SDK's shape classifier is built to refuse.
+     */
+    public function linked(string $id): mixed
+    {
+        return $this->client->request('GET', '/v1/conversations/' . self::seg($id) . '/linked');
+    }
+
+    /**
+     * `GET /v1/conversations/{id}/outcomes` — what came of this thread.
+     *
+     * Merged, newest first, from three places that do not look alike: AI
+     * resolutions, escalations, and `conversation.purchased` events. One
+     * object (`{ conversationId, items }`), `@PaginationExempt` — each arm is
+     * capped at 20 so a pathological thread is bounded rather than slow.
+     *
+     * Readable with `conversations:read:assigned` as well as the full read
+     * scope.
+     */
+    public function outcomes(string $id): mixed
+    {
+        return $this->client->request('GET', '/v1/conversations/' . self::seg($id) . '/outcomes');
+    }
+
+    /**
+     * `POST /v1/conversations/{id}/outcomes` — report an outcome.
+     *
+     * ─── `created: false` IS A SUCCESS, AND YOU MUST READ IT ──────────────
+     *
+     * It means an equal outcome was already on record and this call changed
+     * nothing: a replayed resolution inside 24h, an escalation inside 60s, or
+     * a purchase whose `outcomeRef` we already hold. The route is
+     * deduplicating on its own terms, beyond the idempotency key, so a 201
+     * does not mean a new row.
+     *
+     * ─── `amountCents` IS RECORDED AND NOT SUMMED ANYWHERE ────────────────
+     *
+     * There is no revenue report in this product. The amount lands on the
+     * `cdp_events` row, where the contact timeline shows it and a goal can
+     * convert on it, and that is the whole of what it reaches. Accepting it
+     * and saying so beats implying a dashboard that does not exist.
+     *
+     * @param string              $outcome `resolved`, `escalated` or
+     *                                     `purchased`.
+     * @param array<string,mixed> $options Merged into the body. `reason` —
+     *                                     required in practice on
+     *                                     `escalated`, where it is classified
+     *                                     into the handoff-reason funnel and
+     *                                     posted to the receiving human as an
+     *                                     internal note; an escalation with
+     *                                     no reason is a thread somebody
+     *                                     picks up blind. Also `messageId`,
+     *                                     and `amountCents` / `currency` for
+     *                                     `purchased`.
+     */
+    public function recordOutcome(string $id, string $outcome, array $options = []): mixed
+    {
+        return $this->httpPost(
+            '/v1/conversations/' . self::seg($id) . '/outcomes',
+            ['outcome' => $outcome] + $options,
+        );
+    }
+
+    /**
+     * `POST /v1/conversations/{id}/return-to-bot` — hand a thread back to an
+     * assistant after a human took it.
+     *
+     * The thread leaves the human queue and belongs to that bot. Needs
+     * `conversations:assign` — not `conversations:write` — because moving a
+     * conversation's OWNER is a routing decision about somebody else's work,
+     * not an edit to the thread.
+     *
+     * Refused on a pending, snoozed, closed or merged thread, and on a bot
+     * that is not active.
+     *
+     * ─── `$botId` IS REQUIRED, DELIBERATELY ───────────────────────────────
+     *
+     * It does not default to "whoever owned it before". The previous owner is
+     * recoverable, but defaulting to it would make the common case a guess
+     * about intent — a thread three assistants have touched has no obvious
+     * "the" bot, and getting it wrong means the visitor talks to the returns
+     * agent about a size exchange. {@see Bots::list()} lists the choices.
+     */
+    public function returnToBot(string $id, string $botId): mixed
+    {
+        return $this->httpPost(
+            '/v1/conversations/' . self::seg($id) . '/return-to-bot',
+            ['botId' => $botId],
+        );
+    }
+
+    /**
+     * `PATCH /v1/conversations/{id}/messages/{messageId}/blocks` — edit rich
+     * blocks on a message already sent.
+     *
+     * How a streaming agent stops a `status` block spinning, or fills in the
+     * reasons under option cards it has already shown. The visitor's open
+     * widget updates in place; no second message appears.
+     *
+     * Each patch is `{ id, set }` and MERGES into the block with that id —
+     * `set` is a partial, so a key you omit is left alone. A patch naming an
+     * unknown block id, or one whose merged result is not a valid block, is
+     * refused and **the whole batch is left untouched**: there is no partial
+     * application to reason about. `type` cannot be changed.
+     *
+     * Answers the message's `{ id, blocks, body }` as stored.
+     *
+     * @param array<int,array<string,mixed>> $patches 1–50 of them.
+     */
+    public function updateBlocks(string $id, string $messageId, array $patches): mixed
+    {
+        return $this->httpPatch(
+            '/v1/conversations/' . self::seg($id) . '/messages/'
+            . self::seg($messageId, 'messageId') . '/blocks',
+            ['patches' => array_values($patches)],
+        );
+    }
 }

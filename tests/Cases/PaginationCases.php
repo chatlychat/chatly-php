@@ -230,11 +230,23 @@ final class PaginationCases
                  * flagged. So the flag has now been wrong in both directions,
                  * and neither time was a parse failure. Check that
                  * `surface.json` parses before believing the next change.
+                 *
+                 * 10 -> 13 was the surface being COMPLETED rather than
+                 * corrected: `bots.list`, `bots.deliveries` and
+                 * `triggers.list` were flagged in the manifest already and
+                 * had no method here to flag. All three really do answer
+                 * `{ items, nextCursor, hasMore }`.
+                 *
+                 * `billing.invoices` is the near miss worth naming: it
+                 * paginates, it is NOT in this set, and that is right — its
+                 * envelope is `{ data, nextCursor }`, so a walker built on
+                 * `items` would read every page as empty and stop, which is
+                 * the Rust client's wrong-answer bug with a different cause.
                  */
                 Assert::same(
-                    10,
+                    13,
                     \count(SurfaceCases::PAGED),
-                    'the manifest carries 10 paged entries',
+                    'the manifest carries 13 paged entries',
                 );
 
                 $manifestPath = \dirname(__DIR__, 3) . '/sdk-spec/surface.json';
@@ -294,6 +306,9 @@ final class PaginationCases
                     'search.query' => ['search', 'autoQuery', ['refund']],
                     'events.list' => ['events', 'autoList', []],
                     'webhooks.deliveries' => ['webhooks', 'autoDeliveries', []],
+                    'bots.list' => ['bots', 'autoList', []],
+                    'bots.deliveries' => ['bots', 'autoDeliveries', ['bot_1']],
+                    'triggers.list' => ['triggers', 'autoList', []],
                 ];
 
                 /*
@@ -309,9 +324,9 @@ final class PaginationCases
                 Assert::same(
                     ResponseShapes::withShape(ResponseShapes::PAGE),
                     $exercised,
-                    'the walkers exercised here must be exactly the 10 routes declared `page`',
+                    'the walkers exercised here must be exactly the 13 routes declared `page`',
                 );
-                Assert::same(10, \count($walkers), 'and there are ten of them');
+                Assert::same(13, \count($walkers), 'and there are thirteen of them');
 
                 foreach ($walkers as $label => [$namespace, $method, $args]) {
                     $transport = new FakeTransport();
@@ -389,6 +404,9 @@ final class PaginationCases
                     ['search', 'autoQuery', ['refund'], '/v1/search'],
                     ['events', 'autoList', [], '/v1/cdp/events'],
                     ['webhooks', 'autoDeliveries', [], '/v1/webhooks/deliveries'],
+                    ['bots', 'autoList', [], '/v1/bots'],
+                    ['bots', 'autoDeliveries', ['bot_1'], '/v1/bots/bot_1/deliveries'],
+                    ['triggers', 'autoList', [], '/v1/triggers'],
                 ];
 
                 foreach ($walks as [$namespace, $method, $args, $path]) {

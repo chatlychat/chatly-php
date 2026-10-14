@@ -10,15 +10,18 @@ use Chatly\Tests\FakeTransport;
 use Chatly\Tests\Skipped;
 
 /**
- * The 55 methods of the shared SDK surface, EXECUTED, and the parity evidence
- * that execution produces.
+ * The 162 methods of the shared SDK surface, EXECUTED, and the parity
+ * evidence that execution produces.
  *
  * ─── WHY THIS RUNS THE CLIENT INSTEAD OF READING THE SOURCE ───────────────
  *
  * The first version of `scripts/check-sdk-surface-parity.mjs` matched path
  * strings in SDK source TEXT, and it was fooled: doc comments mentioning a
  * route counted as implementations of it, so it printed 55/55 for methods
- * that did not exist. Text matching cannot tell documentation from code, and
+ * that did not exist — a trap still live in this tree: a grep for
+ * key-accessible routes counts the `@Get(':id')` written inside a docblock on
+ * `bot-routes.module.ts` as a second route. Text matching cannot tell
+ * documentation from code, and
  * it cannot see a path assembled through a helper either — which is how every
  * path in this package is built.
  *
@@ -53,7 +56,7 @@ final class SurfaceCases
     /**
      * The `ns.name` of every manifest entry marked `paged: true`.
      *
-     * TEN, and it has been both 8 and 7 — the manifest's `paged` flag was
+     * THIRTEEN, and it has been 8, 7 and 10 — the manifest's `paged` flag was
      * wrong in both directions and the history is the point.
      *
      * It read 8 and included `macros.list`, whose handler is
@@ -70,6 +73,13 @@ final class SurfaceCases
      * drops again, check that `surface.json` parses before believing a route
      * stopped paginating.
      *
+     * 10 -> 13 came with the rest of the surface: `bots.list`,
+     * `bots.deliveries` and `triggers.list`, each read off its own
+     * `@ZodResponse` schema — `botsPageSchema`, `agentDeliveriesPageSchema`
+     * and `triggersPageSchema`, all three `{ items, nextCursor, hasMore }`.
+     * That was a growth in what the manifest covers, not a correction to it;
+     * the manifest had them flagged already.
+     *
      * Used for two things: deciding what the fake transport answers each
      * route with, and as an anti-vacuity floor in {@see PaginationCases}.
      */
@@ -84,88 +94,31 @@ final class SurfaceCases
         'search.query',
         'events.list',
         'webhooks.deliveries',
+        'bots.list',
+        'bots.deliveries',
+        'triggers.list',
     ];
 
     /**
-     * `[namespace, manifest name, PHP method, verb, manifest path, arguments]`.
+     * The route table, and the manifest-namespace to PHP-property mapping.
      *
-     * Arguments use {@see SENTINELS} for path parameters, in path order, and
-     * ordinary throwaway values for everything else (a body field, a title, a
-     * tag that travels in the body rather than the path).
+     * Both live in {@see SurfaceTable} — 159 rows of data and one derivation,
+     * with no assertions in them. They are re-exposed here because this is
+     * the class the rest of the suite names, and because splitting data from
+     * the behaviour that checks it is the only way this file stays under the
+     * 650-line ceiling CONTRACT.md §9 sets. Nothing but the location changed.
      *
      * @return array<int,array{0:string,1:string,2:string,3:string,4:string,5:array<int,mixed>}>
      */
     public static function surface(): array
     {
-        return [
-            ['root', 'whoami', 'whoami', 'GET', '/v1/api-keys/whoami', []],
+        return SurfaceTable::surface();
+    }
 
-            ['contacts', 'list', 'list', 'GET', '/v1/contacts', []],
-            ['contacts', 'get', 'get', 'GET', '/v1/contacts/{id}', ['__p0__']],
-            ['contacts', 'upsert', 'upsert', 'POST', '/v1/contacts', [['email' => 'a@b.test']]],
-            ['contacts', 'bulk_upsert', 'bulkUpsert', 'POST', '/v1/contacts/bulk', [[['email' => 'a@b.test']]]],
-            ['contacts', 'merge', 'merge', 'POST', '/v1/contacts/{id}/merge', ['__p0__', 'c_absorbed']],
-            ['contacts', 'add_tags', 'addTags', 'POST', '/v1/contacts/{id}/tags', ['__p0__', 'vip']],
-            ['contacts', 'remove_tag', 'removeTag', 'DELETE', '/v1/contacts/{id}/tags/{tag}', ['__p0__', '__p1__']],
-            ['contacts', 'unsubscribe', 'unsubscribe', 'POST', '/v1/contacts/{id}/unsubscribe', ['__p0__']],
-            ['contacts', 'journey', 'journey', 'GET', '/v1/contacts/{id}/journey', ['__p0__']],
-
-            ['conversations', 'list', 'list', 'GET', '/v1/conversations', []],
-            ['conversations', 'get', 'get', 'GET', '/v1/conversations/{id}', ['__p0__']],
-            ['conversations', 'messages', 'messages', 'GET', '/v1/conversations/{id}/messages', ['__p0__']],
-            ['conversations', 'send', 'send', 'POST', '/v1/conversations/{id}/messages', ['__p0__', 'hello']],
-            ['conversations', 'unattended', 'unattended', 'GET', '/v1/conversations/unattended', []],
-            ['conversations', 'agent_handling', 'agentHandling', 'GET', '/v1/conversations/{id}/agent-handling', ['__p0__']],
-            ['conversations', 'set_agent_handling', 'setAgentHandling', 'PUT', '/v1/conversations/{id}/agent-handling', ['__p0__', 'handled']],
-            ['conversations', 'generated_replies', 'generatedReplies', 'GET', '/v1/conversations/{id}/generated-replies', ['__p0__']],
-            ['conversations', 'generate_reply', 'generateReply', 'POST', '/v1/conversations/{id}/generated-replies', ['__p0__', 'a draft']],
-            ['conversations', 'scheduled_messages', 'scheduledMessages', 'GET', '/v1/conversations/{id}/scheduled-messages', ['__p0__']],
-            ['conversations', 'schedule_message', 'scheduleMessage', 'POST', '/v1/conversations/{id}/scheduled-messages', ['__p0__', 'later', '2026-01-01T00:00:00Z']],
-            ['conversations', 'cancel_scheduled', 'cancelScheduled', 'DELETE', '/v1/conversations/scheduled-messages/{scheduled_id}', ['__p0__']],
-
-            ['tickets', 'list', 'list', 'GET', '/v1/tickets', []],
-            ['tickets', 'comments', 'comments', 'GET', '/v1/tickets/{id}/comments', ['__p0__']],
-            ['tickets', 'for_conversation', 'forConversation', 'GET', '/v1/tickets/for-conversation/{conversation_id}', ['__p0__']],
-            ['tickets', 'queues', 'queues', 'GET', '/v1/tickets/queues', []],
-            ['tickets', 'merge', 'merge', 'POST', '/v1/tickets/{id}/merge', ['__p0__', 't_absorbed']],
-            ['tickets', 'split', 'split', 'POST', '/v1/tickets/{id}/split', ['__p0__', 'The second problem']],
-            ['tickets', 'bulk', 'bulk', 'POST', '/v1/tickets/bulk', [['t_1'], 'status', ['status' => 'closed']]],
-
-            ['macros', 'list', 'list', 'GET', '/v1/macros', []],
-            ['macros', 'create', 'create', 'POST', '/v1/macros', [['name' => 'Refund', 'scope' => 'workspace', 'body' => 'done']]],
-            ['macros', 'update', 'update', 'PATCH', '/v1/macros/{id}', ['__p0__', ['name' => 'Refunded']]],
-            ['macros', 'delete', 'delete', 'DELETE', '/v1/macros/{id}', ['__p0__']],
-
-            ['kb', 'articles', 'articles', 'GET', '/v1/kb/articles', []],
-            ['kb', 'article', 'article', 'GET', '/v1/kb/articles/{slug}', ['__p0__']],
-            ['kb', 'collections', 'collections', 'GET', '/v1/kb/collections', []],
-
-            ['search', 'query', 'query', 'GET', '/v1/search', ['refund']],
-
-            ['events', 'track', 'track', 'POST', '/v1/cdp/events', ['c_1', 'order_placed']],
-            ['events', 'list', 'list', 'GET', '/v1/cdp/events', []],
-
-            ['webhooks', 'deliveries', 'deliveries', 'GET', '/v1/webhooks/deliveries', []],
-            ['webhooks', 'delivery', 'delivery', 'GET', '/v1/webhooks/deliveries/{id}', ['__p0__']],
-            ['webhooks', 'redeliver', 'redeliver', 'POST', '/v1/webhooks/deliveries/{id}/redeliver', ['__p0__']],
-
-            ['reports', 'overview', 'overview', 'GET', '/v1/reports/overview', []],
-            ['reports', 'agents', 'agents', 'GET', '/v1/reports/agents', []],
-            ['reports', 'conversations_by_day', 'conversationsByDay', 'GET', '/v1/reports/conversations-by-day', []],
-            ['reports', 'sla', 'sla', 'GET', '/v1/reports/sla', []],
-
-            ['channels', 'list', 'list', 'GET', '/v1/channels', []],
-            ['channels', 'get', 'get', 'GET', '/v1/channels/{id}', ['__p0__']],
-
-            ['billing', 'plans', 'plans', 'GET', '/v1/billing/plans', []],
-            ['billing', 'usage', 'usage', 'GET', '/v1/billing/usage', ['ai.tokens']],
-
-            ['workspace', 'settings', 'settings', 'GET', '/v1/workspace/settings', []],
-            ['workspace', 'labels', 'labels', 'GET', '/v1/labels', []],
-            ['workspace', 'inboxes', 'inboxes', 'GET', '/v1/inboxes', []],
-            ['workspace', 'team_members', 'teamMembers', 'GET', '/v1/teams/{id}/members', ['__p0__']],
-            ['workspace', 'agent_skills', 'agentSkills', 'GET', '/v1/agents/skills', []],
-        ];
+    /** @see SurfaceTable::property() */
+    public static function property(string $namespace): string
+    {
+        return SurfaceTable::property($namespace);
     }
 
     /**
@@ -182,7 +135,7 @@ final class SurfaceCases
      *
      * It also records the top-level RESPONSE shape, by feeding each method the
      * shape {@see ResponseShapes} declares for its route — one fixture per
-     * route, not one for all 55 — and asserting the value it hands back
+     * route, not one for all 162 — and asserting the value it hands back
      * really has it. See that class for why the declaration is hand-written
      * and not read from `surface.json`.
      *
@@ -196,7 +149,7 @@ final class SurfaceCases
             $label = $namespace . '.' . $specName;
 
             /*
-             * The shape THIS route answers with, not one shape for all 55.
+             * The shape THIS route answers with, not one shape for all 162.
              *
              * A fake that answers every route with `{items,nextCursor}` is
              * how the .NET and Rust clients shipped a decode error on
@@ -211,10 +164,12 @@ final class SurfaceCases
             $transport = ResponseShapes::queue(new FakeTransport(), $shape);
             $client = new ChatlyClient('ck_test', transport: $transport);
 
-            $target = $namespace === 'root' ? $client : $client->{$namespace};
+            $target = $namespace === 'root' ? $client : $client->{self::property($namespace)};
             Assert::true(
                 method_exists($target, $method),
-                "{$label} must exist as " . ($namespace === 'root' ? '' : $namespace . '->') . $method . '()',
+                "{$label} must exist as "
+                . ($namespace === 'root' ? '' : self::property($namespace) . '->')
+                . $method . '()',
             );
 
             $value = $target->{$method}(...$args);
@@ -378,9 +333,9 @@ final class SurfaceCases
     public static function cases(): array
     {
         return [
-            'surface: all 55 methods execute the documented verb and path, and surface.lock.json is regenerated from what they sent' => static function (): void {
+            'surface: all 162 methods execute the documented verb and path, and surface.lock.json is regenerated from what they sent' => static function (): void {
                 $entries = self::recordLockEntries();
-                Assert::same(55, \count($entries), 'the shared surface is 55 methods');
+                Assert::same(162, \count($entries), 'the shared surface is 162 methods');
 
                 $keys = array_map(static fn (array $e): string => $e['ns'] . '.' . $e['name'], $entries);
                 Assert::same(
@@ -395,7 +350,7 @@ final class SurfaceCases
                  * ResponseShapes self-tests its own distribution; this
                  * asserts the same of what actually reached the lock, so a
                  * generator that flattened the field on the way out — or a
-                 * sweep that dropped it — fails here rather than shipping 55
+                 * sweep that dropped it — fails here rather than shipping 162
                  * identical values for the gate to accept.
                  */
                 $recordedShapes = [];
@@ -408,7 +363,7 @@ final class SurfaceCases
                 Assert::same(
                     $expectedShapes,
                     $recordedShapes,
-                    'the shapes written to the lock must be the documented 14/10/30/1, all four present',
+                    'the shapes written to the lock must be the documented 33/13/115/1, all four present',
                 );
 
                 $lock = [
@@ -489,7 +444,7 @@ final class SurfaceCases
                 $recorded = self::recordLockEntries();
                 // Compared as `ns.name => "VERB path"` rather than as whole
                 // arrays, so a stale lock reports the handful of rows that
-                // differ instead of dumping all 55.
+                // differ instead of dumping all 162.
                 $onDisk = self::routeMap($lock['entries']);
                 $now = self::routeMap($recorded);
                 foreach ($now as $key => $route) {
@@ -589,25 +544,57 @@ final class SurfaceCases
                  * Shipping a method that always fails is worse than not
                  * shipping it: the failure arrives at runtime, in production,
                  * in someone else's integration. A reaction records WHO
-                 * reacted and a key is not a person; channel writes need
-                 * `channels:write`, which no key-accessible route grants.
+                 * reacted and a key is not a person. `GET /v1/teams` carries
+                 * no `@AllowApiKey()` — the decorator a grep finds belongs to
+                 * `/teams/{id}/members` below it — and `GET /v1/agents` has
+                 * no handler at all.
+                 *
+                 * ─── TWO ENTRIES CAME OFF THIS LIST, AND WHY ──────────────
+                 *
+                 * `channels.create` and `channels.update` were here, on the
+                 * claim that channel writes "need `channels:write`, which no
+                 * key-accessible route grants". Both halves were false:
+                 * `channels:write` IS in `API_KEY_SCOPES`
+                 * (`api-key-scopes.ts:129`), added deliberately so a
+                 * developer can stand a widget up from code, and both
+                 * handlers carry `@AllowApiKey()`. They are implemented now.
+                 *
+                 * `channels.delete` STAYS. `DELETE /v1/channels/{id}` is the
+                 * one write on that controller with no `@AllowApiKey()`
+                 * (`channels-delete.controller.ts:75-76`) and the scope list
+                 * says so in as many words: it "stays dashboard-only". So
+                 * this list is no longer "everything `channels:write` cannot
+                 * reach" — it is per-route, which is the only way to read it
+                 * that is true.
                  */
                 $client = new ChatlyClient('ck_test', transport: new FakeTransport());
                 $forbidden = [
                     ['conversations', 'react'],
                     ['conversations', 'addReaction'],
                     ['conversations', 'reactions'],
-                    ['channels', 'create'],
-                    ['channels', 'update'],
                     ['channels', 'delete'],
                     ['contacts', 'block'],
+                    ['contacts', 'unblock'],
                     ['workspace', 'teams'],
                     ['workspace', 'agents'],
                 ];
                 foreach ($forbidden as [$namespace, $method]) {
                     Assert::false(
-                        method_exists($client->{$namespace}, $method),
+                        method_exists($client->{self::property($namespace)}, $method),
                         "{$namespace}->{$method}() must not exist: that route refuses an API key",
+                    );
+                }
+
+                /*
+                 * And the two that came off are really here — otherwise this
+                 * case would have been weakened rather than corrected, which
+                 * is indistinguishable from the outside.
+                 */
+                foreach ([['channels', 'create'], ['channels', 'update']] as [$namespace, $method]) {
+                    Assert::true(
+                        method_exists($client->{self::property($namespace)}, $method),
+                        "{$namespace}->{$method}() must exist: its handler carries @AllowApiKey() "
+                        . 'and `channels:write` is a grantable key scope',
                     );
                 }
             },

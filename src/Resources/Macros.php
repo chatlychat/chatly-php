@@ -83,4 +83,72 @@ final class Macros extends AbstractResource
     {
         return $this->client->request('DELETE', '/v1/macros/' . self::seg($id));
     }
+
+    /**
+     * `GET /v1/macros/{id}` — one macro, in full.
+     *
+     * {@see list()} is capped at 200 rows by usage rank, so this is how you
+     * read a macro that is rarely used enough to have fallen off the end of
+     * it.
+     */
+    public function get(string $id): mixed
+    {
+        return $this->client->request('GET', '/v1/macros/' . self::seg($id));
+    }
+
+    /**
+     * `GET /v1/macros/actions` — what a macro's `actions` may contain.
+     *
+     * `{ limit, actions }` — an object, not a list. A fixed vocabulary of
+     * eleven entries defined in code, with `limit` saying how many actions
+     * one macro may carry. Build an action editor from this; the enum moves
+     * with releases and a hard-coded copy goes stale.
+     *
+     * Worth knowing where the related failure surfaces: a macro row whose
+     * action has since been REMOVED from this registry answers **422** when
+     * it is run, naming the action and its index. That is one of the few
+     * routes on this API that returns 422 at all — schema validation here is
+     * 400.
+     */
+    public function actions(): mixed
+    {
+        return $this->httpGet('/v1/macros/actions');
+    }
+
+    /**
+     * `GET /v1/macros/templates` — the installable starter catalogue.
+     *
+     * ─── AN OBJECT, NOT AN ARRAY, AND NOT A PAGE ──────────────────────────
+     *
+     * `{ items, total }`. It reads like a list and sits one
+     * `@PaginationExempt` hop from being a bare array, but it is neither that
+     * nor a cursor envelope — there is no `nextCursor` and no `hasMore`, so a
+     * client that treats it as either gets nothing. `total` is
+     * `count($items)` over a frozen in-process catalogue: exact, and never a
+     * hint at a second page.
+     *
+     * Rows are the LITE shape — no body. {@see template()} for one in full.
+     */
+    public function templates(): mixed
+    {
+        return $this->httpGet('/v1/macros/templates');
+    }
+
+    /**
+     * `GET /v1/macros/templates/{slug}` — one template, with its body.
+     *
+     * An unknown slug is a **404**, not a 400 — a missing member of a
+     * collection rather than a malformed request. (It used to be a 400, from
+     * an enum parse in front of the lookup, which made the service's own 404
+     * unreachable.)
+     *
+     * `actions` and `shortCode` are genuinely **ABSENT** from most templates
+     * rather than null — a starter library that silently closed conversations
+     * would be a nasty surprise on first install — so test for the key, not
+     * for a null.
+     */
+    public function template(string $slug): mixed
+    {
+        return $this->client->request('GET', '/v1/macros/templates/' . self::seg($slug, 'slug'));
+    }
 }

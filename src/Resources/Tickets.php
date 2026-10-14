@@ -132,4 +132,105 @@ final class Tickets extends AbstractResource
 
         return $this->httpPost('/v1/tickets/bulk', $body);
     }
+
+    /**
+     * `GET /v1/tickets/{id}/conversations` — every thread this ticket covers,
+     * **origin first**.
+     *
+     * A bare array, `@PaginationExempt`. The point of the route is a tracker:
+     * one ticket explaining an outage that fifty customers wrote in about, and
+     * this is how all fifty are reachable from it.
+     *
+     * ─── THE FIELDS ARE NULLABLE, AND NOT BECAUSE OF PERMISSIONS ──────────
+     *
+     * `subject`, `status` and `channelType` are null when the link's
+     * conversation was **hard-deleted** — the query LEFT joins, so the row
+     * survives as a tombstone rather than vanishing from the count. Read
+     * `isOrigin` to find the thread the ticket was opened from.
+     */
+    public function conversations(string $id): mixed
+    {
+        return $this->client->request('GET', '/v1/tickets/' . self::seg($id) . '/conversations');
+    }
+
+    /**
+     * `GET /v1/tickets/open-count/{conversationId}` — "is there unfinished
+     * work on this thread?"
+     *
+     * `{ openTickets: n }` — one integer in an object, which is why it is
+     * `@PaginationExempt`.
+     *
+     * Note the path shape: the parameter is a CONVERSATION id, not a ticket
+     * id, even though the route lives under `/v1/tickets`. It is gated on
+     * being able to see that conversation — answering for a thread on an
+     * inbox the key is kept off would both leak the fact and confirm the id
+     * exists.
+     */
+    public function openCount(string $conversationId): mixed
+    {
+        return $this->client->request(
+            'GET',
+            '/v1/tickets/open-count/' . self::seg($conversationId, 'conversationId'),
+        );
+    }
+
+    /**
+     * `GET /v1/tickets/{id}/time` — logged time, with both totals.
+     *
+     * `{ items, totalMinutes, billableMinutes }` — an object with an `items`
+     * key, and **not a page**: no cursor, nothing to walk. `billableMinutes`
+     * is the figure that reaches an invoice and is COMPUTED server-side, so
+     * do not re-derive it by filtering `items` on `billable` — that is the
+     * whole reason it is sent.
+     */
+    public function time(string $id): mixed
+    {
+        return $this->client->request('GET', '/v1/tickets/' . self::seg($id) . '/time');
+    }
+
+    /**
+     * `GET /v1/tickets/{id}/status-history` — transitions, **oldest first**,
+     * with time spent in each status.
+     *
+     * The service caps at 500 rows, and **`truncated` is what distinguishes a
+     * capped timeline from a short one** — without it, a 500-row answer and a
+     * complete one look identical.
+     *
+     * Two nulls that are not errors: `previousStatus` is null on the ticket's
+     * first row, and `timeInPreviousStatusSeconds` is null on the first row
+     * RETURNED — which, on a truncated history, is not the ticket's first.
+     * `status` at the top level comes from `tickets.status` rather than from
+     * the last history row, so it is right even when rows are missing, and
+     * `currentStatusForSeconds` is null when there is no recorded transition
+     * at all.
+     *
+     * `changeSource` tells an `api` change from a `workflow`, an `sla_breach`
+     * or a `customer_reply` — useful for working out what moved a ticket
+     * nobody remembers touching.
+     */
+    public function statusHistory(string $id): mixed
+    {
+        return $this->client->request('GET', '/v1/tickets/' . self::seg($id) . '/status-history');
+    }
+
+    /**
+     * `GET /v1/tickets/{id}/lineage` — what this ticket was split from or
+     * follows up, and vice versa.
+     *
+     * ─── A NULL REF WITH A NON-NULL ID IS A DANGLING POINTER ──────────────
+     *
+     * The response carries the raw column values (`splitFromTicketId`,
+     * `parentTicketId`) **alongside** the resolved refs (`splitFrom`,
+     * `followUpOf`) precisely so you can tell them apart: neither column has
+     * a foreign key to prevent the target being gone. `splitFrom: null` with
+     * `splitFromTicketId: "…"` means the parent was deleted, which is a
+     * different thing from "this was never split".
+     *
+     * Each list is capped at 25, with `splitIntoTruncated` /
+     * `followUpsTruncated` saying so.
+     */
+    public function lineage(string $id): mixed
+    {
+        return $this->client->request('GET', '/v1/tickets/' . self::seg($id) . '/lineage');
+    }
 }

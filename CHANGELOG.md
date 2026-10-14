@@ -9,6 +9,57 @@ you.
 
 ## [Unreleased]
 
+### Added
+
+- **The surface is complete: 162 typed methods, up from 55.** Every entry in
+  `packages/sdk-spec/surface.json` now has a method. 11 new namespaces —
+  `ai`, `bots`, `botRoutes`, `brands`, `triggers`, `canvasSteps`,
+  `customerCards`, `customerCardEndpoints`, `docsSources`, `emailTemplates`,
+  `knowledgeGaps` — and 32 methods added to the eight that existed, plus
+  `$chatly->me()`. `request()` still reaches the 12 key-accessible routes the
+  manifest does not list.
+- Three new auto-paginators, for the three new `page` routes: `bots->list()`,
+  `bots->deliveries()` and `triggers->list()`. Thirteen walkers now, not ten.
+- A PHP property name is `camelCase` where the manifest's `ns` is
+  `snake_case` — `$chatly->botRoutes`, not `$chatly->bot_routes`, per
+  CONTRACT.md §9. The lock still records the manifest's own spelling;
+  `SurfaceTable::property()` holds the single mapping.
+
+### Fixed
+
+- **Three key-accessible routes this SDK could not reach, found while
+  completing the surface and now closed.** Each carried `@AllowApiKey()` and
+  was absent from `packages/sdk-spec/surface.json`; all three were added to
+  the manifest on 2026-10-14 and have methods here:
+  - `webhooks->delete()` (`DELETE /v1/webhooks/{id}`) — the only write on
+    that controller a key could not make, while create and the schema-version
+    patch both could, so a key could add a delivery target and never remove
+    one. The workaround people reached for — repointing the endpoint at a dead
+    url — leaves the subscription live and the delivery log filling with
+    failures.
+  - `$chatly->me()` (`GET /v1/me`) — discriminated on `principal`, declares no
+    permission, and is therefore a better liveness check than `whoami()`: a
+    key with no useful scope still gets a 200.
+  - `workspace->mine()` (`GET /v1/workspaces/me`) — a bare array that stays an
+    array for a key, holding the one workspace it was issued in. The cheapest
+    way to confirm which tenant a key points at.
+- **`channels->create()` and `channels->update()` existed and were
+  deliberately withheld.** The class docblock and the suite both asserted
+  that channel writes "need `channels:write`, which no key-accessible route
+  grants". Both halves were false: `channels:write` is in `API_KEY_SCOPES`,
+  added so a developer can stand a widget up from code, and both handlers
+  carry `@AllowApiKey()`. They are implemented, along with
+  `channels->rotateSecret()`. `DELETE /v1/channels/{id}` really is
+  dashboard-only and is still deliberately absent — so that list is now
+  per-route rather than per-scope, which is the only way to read it that is
+  true.
+- Route counts in `ChatlyClient`'s docblock and the README said "140 of 886"
+  key-accessible routes and "55" typed. The live figures are 174 of 909, from
+  `node scripts/report-api-key-surface.mjs --json`, which is the one place
+  they should ever be read from. `request()`'s docblock also listed the three
+  routes above as reachable only through the escape hatch, which stopped being
+  true when they were added to the manifest.
+
 ### Changed
 
 - **A paged route that answers with a non-page body is now an error.**
@@ -33,12 +84,22 @@ you.
   hand in `tests/Cases/ResponseShapes.php` from the API handlers' own
   `@ZodResponse` schemas and **not** read from `surface.json`. The suite
   feeds each method a fixture of its own declared shape — not one body for
-  all 55 — and asserts the value handed back really has it;
+  all 159 — and asserts the value handed back really has it;
   `scripts/check-sdk-surface-parity.mjs` diffs eight independently written
   columns against the manifest.
-- Documentation fix: there are **ten** paged routes and ten `auto…()`
-  walkers, not seven. The count below was written when the manifest's `paged`
-  flag was wrong.
+- Documentation fix: there are **thirteen** paged routes and thirteen
+  `auto…()` walkers — seven, then ten, now thirteen. The first two changes
+  were corrections to a manifest `paged` flag that was wrong in both
+  directions; the third was the surface being completed. `billing->invoices()`
+  is the near miss: it paginates and is deliberately **not** a `Page`, because
+  its envelope is `{ data, nextCursor }` and this SDK's pager reads `items`.
+- `tests/Cases/SurfaceCases.php` and `tests/Cases/ResponseShapes.php` were
+  split (into `SurfaceTable.php` and `ShapeSelfTestCases.php`) once the new
+  rows pushed them to 807 and 687 lines against the 650 CONTRACT.md §9
+  allows. The shape distribution is 33 array / 13 page / 115 object / 1
+  empty; `macros.delete` is still the only real 204, and six routes that look
+  like one are not. Data in one file, the assertions over it in the other; no assertion
+  changed meaning.
 
 ## [0.1.0] — 2026-10-12
 

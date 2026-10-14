@@ -51,18 +51,28 @@ actually needs, and keep it in your environment, not in your repository.
 
 ### Which routes are reachable
 
-140 of the API's 886 routes accept an API key. The rest answer a `ck_` key
+174 of the API's 909 routes accept an API key. The rest answer a `ck_` key
 with **403** because they need a signed-in person — a reaction records _who_
-reacted, and a key is not a person.
+reacted, and a key is not a person. Those two figures come from
+`node scripts/report-api-key-surface.mjs --json`, which is the only place to
+read them: every page that stated them by hand has been wrong.
 
-This SDK has hand-written methods for 55 of those routes (the table below).
-The other 85 are reachable through [`request()`](#the-escape-hatch) with the
-same auth, retries, idempotency and error handling.
+This SDK has hand-written methods for **162** of those routes — every entry in
+`packages/sdk-spec/surface.json`, the table below. The other 12 are reachable
+through [`request()`](#the-escape-hatch) with the same auth, retries,
+idempotency and error handling: they accept a key but are not in the manifest,
+so a typed method would fail the cross-SDK parity gate.
 
 Methods for routes that always 403 are deliberately **absent**. There is no
-`conversations->react()` and no `channels->create()`, because shipping a
+`conversations->react()` and no `channels->delete()`, because shipping a
 method that always fails is worse than not shipping it: the failure arrives at
 runtime, in production, in somebody else's integration.
+
+`channels->create()` was on that list and should not have been. Channel
+configuration needs `channels:write`, which **is** grantable to a key — it was
+added so a developer can stand a widget up entirely from code — so the create,
+the patch and the secret rotate are all here. Only the DELETE stays
+dashboard-only.
 
 ## Construction
 
@@ -131,11 +141,21 @@ Every method below maps to exactly one route. Arrays marked `$query` accept
 | Method                                                      | Route                                                |
 | ----------------------------------------------------------- | ---------------------------------------------------- |
 | `$chatly->whoami()`                                         | `GET /v1/api-keys/whoami`                            |
+| `$chatly->me()`                                             | `GET /v1/me`                                         |
 | `$chatly->request($method, $path, $query, $body, $headers)` | anything — see [the escape hatch](#the-escape-hatch) |
 
 `whoami()` returns `['workspaceId' => …, 'scopes' => [...]]`. Make it first in
 any integration: it turns a mis-scoped key into an obvious error now instead
 of a 403 from an unrelated endpoint in three weeks.
+
+`me()` answers the same object for a key and is **discriminated on
+`principal`** — `'api_key'` for a `ck_` key, `'user'` for a signed-in person —
+so it is the one to call from code that might hold either credential. It
+declares **no permission at all**, which makes it the better liveness check: a
+key with no useful scope still gets a 200, where `whoami()` needs
+`workspace:read` and would answer that same key a 403 that tells you nothing
+about whether the key, the host or the network was at fault. Both are
+`@AllowWhenSuspended`.
 
 ### `contacts`
 
@@ -151,6 +171,8 @@ of a 403 from an unrelated endpoint in three weeks.
 | `removeTag(string $id, string $tag)`                                         | `DELETE /v1/contacts/{id}/tags/{tag}` |
 | `unsubscribe(string $id, bool $unsubscribed = true, ?string $reason = null)` | `POST /v1/contacts/{id}/unsubscribe`  |
 | `journey(string $id, array $query = [])`                                     | `GET /v1/contacts/{id}/journey`       |
+| `mood(string $id, array $query = [])`                                        | `GET /v1/contacts/{id}/mood`          |
+| `cards(string $contactId, ?string $conversationId = null)`                   | `POST /v1/contacts/{contactId}/cards` |
 
 - `upsert` keys on `externalId`: sending the same one twice updates rather
   than duplicating.
@@ -163,7 +185,13 @@ of a 403 from an unrelated endpoint in three weeks.
   conversation and still lands in your inbox. It is not a block.
 - `merge` is irreversible: `$id` survives, `$mergedId` is consumed.
 - `journey` is paginated by an ISO-8601 timestamp cursor rather than the
-  opaque cursor the list endpoints use, so it has no `auto…()` walk.
+  opaque cursor the list endpoints use, so it has an `autoJourney()` walk but
+  no constructible cursor: pass back what you were given.
+- `cards` is a **POST that reads**. It calls your own card backends while you
+  wait, so it is as slow as your slowest card, and it answers 201 without
+  creating anything. `state` on an entry says why a card has no blocks.
+- `mood` echoes the window back as `days`; read `sampleCount` before trusting
+  the number.
 
 ### `conversations`
 
@@ -211,6 +239,11 @@ of a 403 from an unrelated endpoint in three weeks.
 | `merge(string $id, string $loserId)`                            | `POST /v1/tickets/{id}/merge`                       |
 | `split(string $id, string $title, array $fields = [])`          | `POST /v1/tickets/{id}/split`                       |
 | `bulk(array $ids, string $action, array $payload = [])`         | `POST /v1/tickets/bulk`                             |
+| `conversations(string $id)`                                     | `GET /v1/tickets/{id}/conversations`                |
+| `openCount(string $conversationId)`                             | `GET /v1/tickets/open-count/{conversationId}`       |
+| `time(string $id)`                                              | `GET /v1/tickets/{id}/time`                         |
+| `statusHistory(string $id)`                                     | `GET /v1/tickets/{id}/status-history`               |
+| `lineage(string $id)`                                           | `GET /v1/tickets/{id}/lineage`                      |
 
 - `list` excludes `merged` tickets unless you filter on status explicitly.
 - `comments` includes internal notes. Filter on `isInternal` before showing
@@ -220,15 +253,30 @@ of a 403 from an unrelated endpoint in three weeks.
   your key's inbox scope are refused individually.
 - `split` requires a title, and inherits `priority`, `type`, `assigneeUserId`
   and `tags` from the origin when they are omitted.
+- `openCount` takes a **conversation** id even though it lives under
+  `/v1/tickets`.
+- `conversations` LEFT joins, so `subject`, `status` and `channelType` are
+  null on a row whose conversation was hard-deleted — the link survives as a
+  tombstone.
+- `statusHistory` is oldest first and caps at 500; **`truncated` is the only
+  thing distinguishing a capped timeline from a short one**.
+- `lineage` returns the raw id columns beside the resolved refs, so a null ref
+  with a non-null id tells you the target was deleted rather than never set.
+- `time` carries a computed `billableMinutes`; do not re-derive it by
+  filtering `items`.
 
 ### `macros`
 
-| Method                               | Route                    |
-| ------------------------------------ | ------------------------ |
-| `list(array $query = [])`            | `GET /v1/macros`         |
-| `create(array $macro)`               | `POST /v1/macros`        |
-| `update(string $id, array $changes)` | `PATCH /v1/macros/{id}`  |
-| `delete(string $id)`                 | `DELETE /v1/macros/{id}` |
+| Method                               | Route                             |
+| ------------------------------------ | --------------------------------- |
+| `list(array $query = [])`            | `GET /v1/macros`                  |
+| `create(array $macro)`               | `POST /v1/macros`                 |
+| `update(string $id, array $changes)` | `PATCH /v1/macros/{id}`           |
+| `delete(string $id)`                 | `DELETE /v1/macros/{id}`          |
+| `get(string $id)`                    | `GET /v1/macros/{id}`             |
+| `actions()`                          | `GET /v1/macros/actions`          |
+| `templates()`                        | `GET /v1/macros/templates`        |
+| `template(string $slug)`             | `GET /v1/macros/templates/{slug}` |
 
 **`list()` is not paginated and returns a plain array**, so there is no
 `autoList()` for it and no `cursor` or `limit` to pass. The route caps the
@@ -303,23 +351,52 @@ implies the narrow one.
 | `autoDeliveries(array $query = [], ?int $maxPages = null): Generator` | walks the deliveries                          |
 | `delivery(string $id)`                                                | `GET /v1/webhooks/deliveries/{id}`            |
 | `redeliver(string $id)`                                               | `POST /v1/webhooks/deliveries/{id}/redeliver` |
+| `list()`                                                              | `GET /v1/webhooks`                            |
+| `create(string $url, array $eventTypes, array $options = [])`         | `POST /v1/webhooks`                           |
+| `events()`                                                            | `GET /v1/webhooks/events`                     |
+| `schemaVersions()`                                                    | `GET /v1/webhooks/schema-versions`            |
+| `setSchemaVersion(string $id, string $schemaVersion)`                 | `PATCH /v1/webhooks/{id}/schema-version`      |
+| `delete(string $id)`                                                  | `DELETE /v1/webhooks/{id}`                    |
 
 Narrow the list with `endpointId` and `status`. `delivery` includes the exact
 body we POSTed, which is what you need to re-verify a signature offline.
 `redeliver` **queues**: the response says `queued: true` and the outcome
 appears as a new attempt in the list, sent to the endpoint's _current_ url.
 
+`create()` is the only response that ever carries `secret` — there is no
+rotate and no re-read. After `setSchemaVersion()`, read `missingEventTypes`:
+it names the events your subscription asked for that the version you pinned
+does not carry, which is the difference between a pin that worked and a
+subscription that has gone quiet.
+
+`delete()` was the one route on this controller a key could not reach until
+2026-10-14 — create and the schema-version patch both carried
+`@AllowApiKey()` and it did not, so a key could ADD a delivery target and
+never remove one. A deploy pipeline that registers an endpoint per environment
+leaked one on every run. **Do not "disable" a subscription by repointing it at
+a dead url**: the subscription stays alive, every event still fans out to it,
+and the delivery log fills with failures. Delete it.
+
 Verifying an **incoming** delivery is [a different thing](#webhook-verification)
 and needs no API call.
 
 ### `reports`
 
-| Method                                  | Route                                  |
-| --------------------------------------- | -------------------------------------- |
-| `overview(?int $days = null)`           | `GET /v1/reports/overview`             |
-| `agents(?int $days = null)`             | `GET /v1/reports/agents`               |
-| `conversationsByDay(?int $days = null)` | `GET /v1/reports/conversations-by-day` |
-| `sla(array $query = [])`                | `GET /v1/reports/sla`                  |
+| Method                                                      | Route                                       |
+| ----------------------------------------------------------- | ------------------------------------------- |
+| `overview(?int $days = null)`                               | `GET /v1/reports/overview`                  |
+| `agents(?int $days = null)`                                 | `GET /v1/reports/agents`                    |
+| `conversationsByDay(?int $days = null)`                     | `GET /v1/reports/conversations-by-day`      |
+| `sla(array $query = [])`                                    | `GET /v1/reports/sla`                       |
+| `sources(?int $days = null)`                                | `GET /v1/reports/sources`                   |
+| `attribution(?string $dimension = null, ?int $days = null)` | `GET /v1/reports/attribution`               |
+| `cohorts(?int $weeks = null)`                               | `GET /v1/reports/cohorts`                   |
+| `responseTimes(?int $days = null)`                          | `GET /v1/reports/response-times`            |
+| `teams(array $query = [])`                                  | `GET /v1/reports/teams`                     |
+| `labels(array $query = [])`                                 | `GET /v1/reports/labels`                    |
+| `voice(?int $days = null)`                                  | `GET /v1/reports/voice`                     |
+| `themes(?string $date = null)`                              | `GET /v1/reports/themes`                    |
+| `themeConversations(string $id)`                            | `GET /v1/reports/themes/{id}/conversations` |
 
 `days` is clamped server-side to 1–90 (default 7, except `conversationsByDay`
 which defaults to 14). An unparseable value falls back to the default rather
@@ -327,22 +404,54 @@ than erroring, so read the window in the response instead of assuming yours
 was used. `sla` takes a date range (`from`, `to`, `group_by`,
 `business_hours`) and caps its breach list at 200 rows.
 
+Four of these answer **bare arrays** (`agents`, `conversationsByDay`,
+`sources`, `attribution`) and the other nine answer objects; there is no
+pattern by name. None has a cursor — where a rollup could grow without bound
+it is capped instead, and each reports its cap differently, so read the cap
+rather than the row count. `attribution` is the one route here that **refuses**
+an unknown parameter instead of defaulting, because a typo silently answered
+as `utm_source` would be a confident report of the wrong thing.
+`themeConversations` answers 200 with an empty list for an unknown id, so it
+cannot tell you the id was wrong.
+
 ### `channels`, `billing`, `workspace`
 
-| Method                                                               | Route                        |
-| -------------------------------------------------------------------- | ---------------------------- |
-| `$chatly->channels->list()`                                          | `GET /v1/channels`           |
-| `$chatly->channels->get(string $id)`                                 | `GET /v1/channels/{id}`      |
-| `$chatly->billing->plans()`                                          | `GET /v1/billing/plans`      |
-| `$chatly->billing->usage(string $eventType, array $query = [])`      | `GET /v1/billing/usage`      |
-| `$chatly->workspace->settings()`                                     | `GET /v1/workspace/settings` |
-| `$chatly->workspace->labels()`                                       | `GET /v1/labels`             |
-| `$chatly->workspace->inboxes()`                                      | `GET /v1/inboxes`            |
-| `$chatly->workspace->teamMembers(string $teamId, array $query = [])` | `GET /v1/teams/{id}/members` |
-| `$chatly->workspace->agentSkills()`                                  | `GET /v1/agents/skills`      |
+| Method                                                               | Route                                  |
+| -------------------------------------------------------------------- | -------------------------------------- |
+| `$chatly->channels->list()`                                          | `GET /v1/channels`                     |
+| `$chatly->channels->get(string $id)`                                 | `GET /v1/channels/{id}`                |
+| `$chatly->channels->adapters()`                                      | `GET /v1/channels/adapters`            |
+| `$chatly->channels->create(array $channel)`                          | `POST /v1/channels`                    |
+| `$chatly->channels->update(string $id, array $changes)`              | `PATCH /v1/channels/{id}`              |
+| `$chatly->channels->rotateSecret(string $id)`                        | `POST /v1/channels/{id}/secret/rotate` |
+| `$chatly->billing->plans()`                                          | `GET /v1/billing/plans`                |
+| `$chatly->billing->usage(string $eventType, array $query = [])`      | `GET /v1/billing/usage`                |
+| `$chatly->billing->summary()`                                        | `GET /v1/billing`                      |
+| `$chatly->billing->invoices(array $query = [])`                      | `GET /v1/billing/invoices`             |
+| `$chatly->billing->usageMonthly(array $query = [])`                  | `GET /v1/billing/usage/monthly`        |
+| `$chatly->billing->usageDaily(array $query = [])`                    | `GET /v1/billing/usage/daily`          |
+| `$chatly->workspace->settings()`                                     | `GET /v1/workspace/settings`           |
+| `$chatly->workspace->labels()`                                       | `GET /v1/labels`                       |
+| `$chatly->workspace->inboxes()`                                      | `GET /v1/inboxes`                      |
+| `$chatly->workspace->teamMembers(string $teamId, array $query = [])` | `GET /v1/teams/{id}/members`           |
+| `$chatly->workspace->agentSkills()`                                  | `GET /v1/agents/skills`                |
+| `$chatly->workspace->keyScopes()`                                    | `GET /v1/api-keys/scopes`              |
+| `$chatly->workspace->secrets()`                                      | `GET /v1/workspace/secrets`            |
+| `$chatly->workspace->mine()`                                         | `GET /v1/workspaces/me`                |
 
-Channels are read-only from a key: configuration needs `channels:write`, which
-no key-accessible route grants. Each channel row carries
+`billing->invoices()` **paginates but is not a `Page`**: its envelope is
+`{ data, nextCursor }`, not the `{ items, nextCursor }` every other list
+returns, so there is no `autoInvoices()` — pass `nextCursor` back as `cursor`
+yourself. `channels->adapters()` is the one route here whose array holds
+plain strings rather than objects. `workspace->secrets()` reports existence
+and timestamps only, never a value, and its `truncated` flag is the thing to
+read before concluding a credential does not exist. `workspace->mine()` answers a
+**bare array** and stays one for a key — a list of the single workspace it was
+issued in, which makes it the cheapest way to confirm which tenant a key
+actually points at. Its `role` is a synthetic `restricted` for every key, not
+a stored membership role, so do not branch on it.
+
+Each channel row carries
 `originsRestricted` — check it on a web channel, because an **empty**
 allowed-origins list means _any_ origin and that is invisible if you only look
 at the list.
@@ -376,6 +485,233 @@ It needs `workspace:billing:read`, an owner-level scope.
 normal first-load state. Which skills one agent holds
 (`GET /v1/agents/{userId}/skills`) needs a signed-in person and is not
 reachable with a key.
+
+### `ai`
+
+| Method                                          | Route                                   |
+| ----------------------------------------------- | --------------------------------------- |
+| `providers()`                                   | `GET /v1/ai-providers`                  |
+| `addProvider(string $provider, string $apiKey)` | `POST /v1/ai-providers`                 |
+| `testProvider(string $provider)`                | `POST /v1/ai-providers/{provider}/test` |
+| `quota()`                                       | `GET /v1/ai/quota`                      |
+| `tone()`                                        | `GET /v1/ai/tone`                       |
+| `setTone(array $rules)`                         | `PUT /v1/ai/tone`                       |
+| `tonePreview()`                                 | `GET /v1/ai/tone/preview`               |
+| `generateTone(string $styleGuide)`              | `POST /v1/ai/tone/generate`             |
+| `tools()`                                       | `GET /v1/ai/tools`                      |
+| `createTool(array $tool)`                       | `POST /v1/ai/tools`                     |
+| `updateTool(string $id, array $changes)`        | `PATCH /v1/ai/tools/{id}`               |
+| `deleteTool(string $id)`                        | `DELETE /v1/ai/tools/{id}`              |
+
+- `providers()` returns the **whole supported registry** with a `configured`
+  flag per row, not the subset you have set up. Read the flag.
+- `addProvider()` validates the key against the provider by making a real
+  call, so it is slow and can fail for reasons that are not your request's.
+  Only an authentication-class answer refuses the save; an outage stores the
+  key as `unverified`, which is a state, not an error. Read
+  `validation.status`.
+- `tone()` and `setTone()` both answer a **bare array**. `setTone()` is a
+  REPLACE: omitting a rule deletes it.
+- `tonePreview()` returns an **empty** `instruction` for a workspace that has
+  configured nothing. No house style is invented.
+- `generateTone()` proposes and **does not save**.
+- On `updateTool()`, `secretHeaders` has three states: omit to keep, `null` to
+  clear, a map to replace. A form that round-trips an empty value wipes your
+  credential.
+
+### `bots`
+
+| Method                                                                            | Route                                                  |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `list(array $query = []): Page`                                                   | `GET /v1/bots`                                         |
+| `autoList(array $query = [], ?int $maxPages = null): Generator`                   | walks `GET /v1/bots`                                   |
+| `get(string $id)`                                                                 | `GET /v1/bots/{id}`                                    |
+| `create(array $bot)`                                                              | `POST /v1/bots`                                        |
+| `update(string $id, array $changes)`                                              | `PATCH /v1/bots/{id}`                                  |
+| `updateExternal(string $id, array $changes)`                                      | `PATCH /v1/bots/{id}/external`                         |
+| `rotateExternalSecret(string $id)`                                                | `POST /v1/bots/{id}/external/rotate-secret`            |
+| `deliveries(string $id, array $query = []): Page`                                 | `GET /v1/bots/{id}/deliveries`                         |
+| `autoDeliveries(string $id, array $query = [], ?int $maxPages = null): Generator` | walks the deliveries                                   |
+| `delivery(string $id, string $deliveryId)`                                        | `GET /v1/bots/{id}/deliveries/{deliveryId}`            |
+| `redeliver(string $id, string $deliveryId)`                                       | `POST /v1/bots/{id}/deliveries/{deliveryId}/redeliver` |
+| `testDelivery(string $id)`                                                        | `POST /v1/bots/{id}/test-delivery`                     |
+| `analytics(string $id, ?int $days = null)`                                        | `GET /v1/bots/{id}/analytics`                          |
+
+- `create()` takes a **union of two disjoint bodies** — a Chatly persona
+  (omit `type`) or an external agent (`type: 'external'`). Neither half is
+  strict, so **a field from the wrong one is dropped, not refused**: copy the
+  external example while meaning to create a persona and you get a 201 and a
+  bot with no prompt.
+- On `type: 'external'`, the response carries a signing secret and a `cb_`
+  token **shown once**.
+- `rotateExternalSecret()` has **no overlap window**: the old secret stops
+  working the moment it returns.
+- A `deliveries()` row does **not** carry the signed payload; read one
+  delivery for that.
+- `analytics()` reports p50/p95/max and never a mean, and **every rate is
+  `null`, not 0, when its `sampleSize` is 0**. It takes `days` only —
+  `from`, `to`, `weeks` and `date` are refused by name.
+- `testDelivery()` reports what your endpoint answered, with the signature
+  header and the exact signed payload. It settles every "is it my verifier or
+  your signature" argument without a packet capture.
+
+### `botRoutes`
+
+| Method                               | Route                         |
+| ------------------------------------ | ----------------------------- |
+| `list()`                             | `GET /v1/bot-routes`          |
+| `fields()`                           | `GET /v1/bot-routes/fields`   |
+| `create(array $route)`               | `POST /v1/bot-routes`         |
+| `update(string $id, array $changes)` | `PATCH /v1/bot-routes/{id}`   |
+| `delete(string $id)`                 | `DELETE /v1/bot-routes/{id}`  |
+| `resolve(array $event = [])`         | `POST /v1/bot-routes/resolve` |
+
+`list()` is in **evaluation order** — that ordering is the answer, so do not
+re-sort it and expect the result to describe what the server does. `resolve()`
+is a dry run that changes nothing and needs only `triggers:read`; it returns
+the selected route or null, every route with its verdict, **and the event
+object the conditions were evaluated against**, which is the part that finds a
+condition keyed on a context key that is not where you thought.
+
+### `brands`
+
+| Method                               | Route                    |
+| ------------------------------------ | ------------------------ |
+| `list()`                             | `GET /v1/brands`         |
+| `create(array $brand)`               | `POST /v1/brands`        |
+| `update(string $id, array $changes)` | `PATCH /v1/brands/{id}`  |
+| `delete(string $id)`                 | `DELETE /v1/brands/{id}` |
+
+`domain` is the help-centre hostname; `replyDomain` is the mail domain
+notification replies are addressed at and needs an MX record. They are
+usually different, and pointing an MX at a help-centre hostname is the mistake
+the two fields exist to keep apart. `delete()` is a **soft** delete and
+answers `{ id }`, not a 204.
+
+### `triggers`
+
+| Method                                                          | Route                      |
+| --------------------------------------------------------------- | -------------------------- |
+| `list(array $query = []): Page`                                 | `GET /v1/triggers`         |
+| `autoList(array $query = [], ?int $maxPages = null): Generator` | walks `GET /v1/triggers`   |
+| `create(array $trigger)`                                        | `POST /v1/triggers`        |
+| `delete(string $id)`                                            | `DELETE /v1/triggers/{id}` |
+
+`create()` is an **upsert keyed on `id`** and a REPLACE, not a merge: send
+every field you want to keep, because `{id, name}` drops the rule's conditions
+and actions. It answers **201 on both arms**, so a 201 does not mean something
+new was created. `delete()` is a **hard** delete that answers `{ ok: true }`
+with a 200.
+
+### `canvasSteps`
+
+| Method                               | Route                                |
+| ------------------------------------ | ------------------------------------ |
+| `get(string $id)`                    | `GET /v1/canvas-steps/{id}`          |
+| `resolve(string $id, array $canvas)` | `POST /v1/canvas-steps/{id}/resolve` |
+
+When your app answers a widget canvas with `{ pending: true }`, the visitor
+watches a progress line and a step row is written; `resolve()` replaces it
+with the next screen. The conversation and message ids come from the step id
+and are echoed back, which is the pair to write into your own ledger beside a
+charge. A **404** means the id names nothing here — **including inside the
+very request that answered `{ pending: true }`**, because the row is written
+after we answer the visitor. A **409** means already resolved or expired, and
+is safe to read as "somebody else won".
+
+### `customerCards`
+
+| Method                               | Route                                        |
+| ------------------------------------ | -------------------------------------------- |
+| `list()`                             | `GET /v1/customer-cards`                     |
+| `create(array $card)`                | `POST /v1/customer-cards`                    |
+| `update(string $id, array $changes)` | `PATCH /v1/customer-cards/{id}`              |
+| `rotateSecret(string $id)`           | `POST /v1/customer-cards/{id}/rotate-secret` |
+| `delete(string $id)`                 | `DELETE /v1/customer-cards/{id}`             |
+
+`create()` returns `secret` beside the card and is the **only** response that
+ever does. The url is fetched by our server, not a browser, so it is guarded
+against SSRF: https only, no credentials, nothing resolving to a private or
+link-local address. On `update()`, **`headers: {}` clears them** — absence and
+an empty map are different. `rotateSecret()` has no overlap window; update
+your endpoint first, or use a per-url endpoint secret, which does overlap.
+
+### `customerCardEndpoints`
+
+| Method                       | Route                                                   |
+| ---------------------------- | ------------------------------------------------------- |
+| `list()`                     | `GET /v1/customer-card-endpoints`                       |
+| `create(string $url)`        | `POST /v1/customer-card-endpoints`                      |
+| `rotateSecret(string $id)`   | `POST /v1/customer-card-endpoints/{id}/rotate-secret`   |
+| `activateSecret(string $id)` | `POST /v1/customer-card-endpoints/{id}/activate-secret` |
+| `delete(string $id)`         | `DELETE /v1/customer-card-endpoints/{id}`               |
+
+One secret per **url** instead of per card, with a two-phase rotation that has
+a real overlap window: `rotateSecret()` mints the next secret (`active:
+false`, signing nothing), `activateSecret()` promotes it. The trade is that a
+signed request to that url **stops carrying `x-chatly-card-id`**, so adopting
+or dropping an endpoint secret is a change at your verifier, not a free
+upgrade. Deploy the secret before `create()`, not after.
+
+### `docsSources`
+
+| Method                                 | Route                                |
+| -------------------------------------- | ------------------------------------ |
+| `providers()`                          | `GET /v1/docs-sources/providers`     |
+| `list()`                               | `GET /v1/docs-sources`               |
+| `discover(array $request)`             | `POST /v1/docs-sources/discover`     |
+| `create(array $source)`                | `POST /v1/docs-sources`              |
+| `update(string $id, array $changes)`   | `PATCH /v1/docs-sources/{id}`        |
+| `sync(string $id, ?bool $full = null)` | `POST /v1/docs-sources/{id}/sync`    |
+| `webhook(string $id)`                  | `POST /v1/docs-sources/{id}/webhook` |
+| `delete(string $id)`                   | `DELETE /v1/docs-sources/{id}`       |
+
+- `discover()` is a POST that answers a **bare array** and connects nothing.
+  An org-scoped token cannot list organisations, so pass `organizationId` if
+  discovery fails oddly.
+- `create()` enqueues the first sync before returning, so the source comes
+  back `syncStatus: 'queued'` with no counts. Two sources over one space with
+  different `pathPrefix` values get their own collections, which is the only
+  way to express per-audience help scoping.
+- `webhook()` answers **201 with `subscribed: false`** and a reason when the
+  token cannot manage webhooks. That is a success, not an error — read the
+  flag.
+- `delete()` keeps the articles; `kept` says how many stayed.
+- No response on this namespace carries the provider token back.
+
+### `emailTemplates`
+
+| Method                                                 | Route                               |
+| ------------------------------------------------------ | ----------------------------------- |
+| `list()`                                               | `GET /v1/email-templates`           |
+| `preview(string $kind, string $subject, string $body)` | `POST /v1/email-templates/preview`  |
+| `update(string $kind, string $subject, string $body)`  | `PUT /v1/email-templates/{kind}`    |
+| `delete(string $kind)`                                 | `DELETE /v1/email-templates/{kind}` |
+
+The id in these paths is the **kind**, not a uuid — five fixed kinds, listed
+in `EmailTemplates::KINDS`. `list()` always returns all five, with `override`
+null where the workspace is on the built-in copy, so the length is never the
+answer. `preview()` reports **tokens you wrote that the kind does not
+supply**, which is how an editor catches a typo before it is ever sent.
+`delete()` removes the override rather than copying today's default, so the
+workspace follows the built-in copy from then on — and it answers
+`{ restored: false }` with a 200 when there was nothing to remove.
+
+### `knowledgeGaps`
+
+| Method                               | Route                                |
+| ------------------------------------ | ------------------------------------ |
+| `list(array $query = [])`            | `GET /v1/knowledge-gaps`             |
+| `update(string $id, string $status)` | `PATCH /v1/knowledge-gaps/{id}`      |
+| `draft(string $id)`                  | `POST /v1/knowledge-gaps/{id}/draft` |
+
+`list()` is **most-asked first** — the top row is the article worth writing
+next — and a bare array, capped by the recorder at 200 open gaps. An
+unrecognised `status` filter is **ignored, not refused**, so you get every gap
+with a 200; the same value on `update()` is a 400. `draft()` answers 201 with
+a **nullable `articleId`**: a gap with no conversation to draft from gets a
+null and a `reason`. The article is a draft and is not published until a
+person publishes it.
 
 ## Error handling
 
@@ -709,12 +1045,12 @@ perfectly well-formed digest that authenticates nothing.
 
 ## The escape hatch
 
-85 of the 140 key-accessible routes have no typed method here. Reach them
+12 of the 174 key-accessible routes have no typed method here. Reach them
 without losing auth, retries, idempotency or typed errors:
 
 ```php
 // Any read
-$timeEntries = $chatly->request('GET', '/v1/tickets/' . $id . '/time');
+$roster = $chatly->request('GET', '/v1/teams/' . $teamId . '/members');
 
 // Any write — an Idempotency-Key is added automatically
 $comment = $chatly->request('POST', '/v1/tickets/' . $id . '/comments', body: [
