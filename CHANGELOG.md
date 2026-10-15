@@ -11,6 +11,13 @@ you.
 
 ### Added
 
+- `bots->rotateExternalSecret()` takes an optional second argument,
+  `string|DateTimeInterface|null $activateAt`, for an **overlap window**: the
+  old secret keeps signing deliveries until that instant. It is sent as
+  `{"activateAt": "..."}` — a string verbatim, a `DateTimeInterface` as UTC
+  `Y-m-d\TH:i:s.v\Z`. Without it the call is unchanged, on the wire too: a
+  hard cut that sends `{}`. The response's new `activatesAt` is `null` when
+  the new secret is already signing, otherwise the switch instant.
 - **The surface is complete: 162 typed methods, up from 55.** Every entry in
   `packages/sdk-spec/surface.json` now has a method. 11 new namespaces —
   `ai`, `bots`, `botRoutes`, `brands`, `triggers`, `canvasSteps`,

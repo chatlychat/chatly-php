@@ -30,6 +30,7 @@ use Chatly\Resources\Reports;
 use Chatly\Resources\Search;
 use Chatly\Resources\Tickets;
 use Chatly\Resources\Triggers;
+use Chatly\Resources\Visitors;
 use Chatly\Resources\Webhooks as WebhookDeliveries;
 use Chatly\Resources\Workspace;
 
@@ -52,28 +53,51 @@ use Chatly\Resources\Workspace;
  *
  * ─── WHAT IS REACHABLE ────────────────────────────────────────────────────
  *
- * 174 of the API's 909 routes accept an API key; the rest answer a `ck_` key
- * with 403 because they need a signed-in person (a reaction records *who*
- * reacted, and a key is not a person). The namespaces on this class are the
- * **162** we hand-wrote methods for — every entry in
- * `packages/sdk-spec/surface.json`. Every other key-accessible route is
- * reachable through {@see request()} without abandoning auth, retries,
- * idempotency and typed errors.
+ * Most of the API needs a signed-in person and answers a `ck_` key with 403
+ * (a reaction records *who* reacted, and a key is not a person). The
+ * namespaces on this class are the **163** routes a key CAN drive and that we
+ * hand-wrote methods for — every entry in
+ * `packages/sdk-spec/surface.json`. Anything else is still reachable through
+ * {@see request()} without abandoning auth, retries, idempotency and typed
+ * errors.
  *
- * Those two numbers come from `node scripts/report-api-key-surface.mjs
- * --json`, which is the one source for them: the five documentation pages
- * that stated them by hand were all wrong, twice over. This docblock said
- * "140 of 886" and "55" until the surface was completed, and both were as
- * stale as the pages were.
+ * ─── DO NOT SUBTRACT THESE NUMBERS FROM report-api-key-surface.mjs ───────
  *
- * The 174 and the 162 are different counts of different things, and the gap
- * is not slack: 12 routes accept a key and have no method here, because the
- * manifest does not list them. Three of those were found while completing
- * this SDK and have since been added — see {@see request()}. The manifest is
- * where the rest get fixed, not this class.
+ * This docblock used to say "174 of the API's 909 routes accept an API key"
+ * and then subtract: "the gap is not slack: 12 routes accept a key and have
+ * no method here". That subtraction is invalid, and the manifest's own
+ * `$auditedAgainst` note records the day it cost. `report-api-key-surface.mjs`
+ * counts `@AllowApiKey()` **decorators**, and a class-level decorator opens
+ * many handlers while counting once — so its figure is always the larger and
+ * is not in the same units as a route count.
+ *
+ * The authoritative ROUTE count is `keyAccessible` in `docs/api-counts.json`,
+ * generated from the deployed OpenAPI document. It reads 162 there and 163 in
+ * a local build, because `POST /v1/visitors/{contactId}/start-conversation`
+ * opened on 2026-10-14 and has not shipped yet. Against that number the
+ * manifest covers the whole key-accessible surface, so there is no backlog of
+ * typed methods to write — only new routes as they open.
  */
 final class ChatlyClient
 {
+    /*
+     * The request pipeline lives in `SendsRequests`.
+     *
+     * A trait and not a collaborator class, deliberately: `send()` and
+     * `decode()` read six pieces of this client's state (`baseUrl`,
+     * `authHeaders`, `idempotencyKey`, `retries`, `timeout`, `transport`)
+     * and three of its private constants, so a collaborator would mean
+     * either passing all nine in or making them public. A trait is the same
+     * `$this` with the same visibility, which makes this extraction a pure
+     * move with no behaviour to re-verify.
+     *
+     * It was extracted because the file reached 659 lines against this
+     * repo's 650-line ceiling — a ceiling `check-file-size` only began
+     * applying to `.php` on 2026-10-14, having scanned three of the
+     * repository's eleven languages until then.
+     */
+    use SendsRequests;
+
     public const VERSION = '0.1.0';
 
     /**
@@ -136,6 +160,13 @@ final class ChatlyClient
     public readonly EmailTemplates $emailTemplates;
     public readonly KnowledgeGaps $knowledgeGaps;
     public readonly Triggers $triggers;
+
+    /**
+     * Proactive outreach. ONE method, and it is off by default per workspace —
+     * see {@see Visitors::startConversation()}, whose 403 is usually the
+     * workspace setting rather than the key's scopes.
+     */
+    public readonly Visitors $visitors;
 
     /**
      * @param string                  $apiKey    A workspace API key (`ck_…`). Required.
@@ -235,6 +266,7 @@ final class ChatlyClient
         $this->emailTemplates = new EmailTemplates($this);
         $this->knowledgeGaps = new KnowledgeGaps($this);
         $this->triggers = new Triggers($this);
+        $this->visitors = new Visitors($this);
     }
 
     /**
@@ -437,209 +469,4 @@ final class ChatlyClient
         yield from $paginator->items();
     }
 
-    /**
-     * Perform the request, retrying what is safe to retry.
-     *
-     * @param array<string,mixed>  $query
-     * @param array<string,string> $headers
-     */
-    private function send(
-        string $method,
-        string $path,
-        array $query,
-        mixed $body,
-        array $headers,
-    ): HttpResponse {
-        $method = strtoupper($method);
-        $isWrite = \in_array($method, self::WRITE_METHODS, true);
-        $url = $this->baseUrl . self::normalisePath($path) . self::buildQuery($query);
-
-        $payload = null;
-        $requestHeaders = $this->authHeaders;
-
-        if ($body !== null) {
-            // An empty array is an empty OBJECT here. `json_encode([])` is
-            // `[]`, which every body schema on this API rejects as "expected
-            // object, received array".
-            $payload = $body === []
-                ? '{}'
-                : json_encode($body, \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_THROW_ON_ERROR);
-            $requestHeaders['Content-Type'] = 'application/json';
-        } elseif ($method === 'POST' || $method === 'PUT' || $method === 'PATCH') {
-            // A bodyless POST still needs a JSON body: several write routes
-            // (`/redeliver`) take no fields, and a request with no body and no
-            // content-type is at the mercy of whatever body parser is in
-            // front of the API.
-            $payload = '{}';
-            $requestHeaders['Content-Type'] = 'application/json';
-        }
-
-        if ($isWrite) {
-            /*
-             * Minted ONCE, outside the retry loop.
-             *
-             * Every retry below re-sends this same key, which is the whole
-             * reason the header exists: a write that timed out after the
-             * server committed is deduplicated rather than applied twice.
-             * Move this inside the loop and the SDK's own retries become a
-             * double-write machine.
-             */
-            $requestHeaders['Idempotency-Key'] = $this->idempotencyKey ?? self::uuid4();
-        }
-
-        foreach ($headers as $name => $value) {
-            $requestHeaders[$name] = $value;
-        }
-
-        $attempt = 0;
-        while (true) {
-            ++$attempt;
-            try {
-                $response = $this->transport->send($method, $url, $requestHeaders, $payload, $this->timeout);
-            } catch (TransportException $e) {
-                if ($this->retries->shouldRetryTransport($attempt) && $this->retries->wait($attempt)) {
-                    continue;
-                }
-                throw $e;
-            }
-
-            if ($response->isSuccess()) {
-                return $response;
-            }
-
-            $error = ChatlyException::fromResponse($response);
-            if (!$this->retries->shouldRetryStatus($response->status, $attempt)) {
-                throw $error;
-            }
-            $retryAfter = $error instanceof RateLimitException ? $error->getRetryAfter() : null;
-            if (!$this->retries->wait($attempt, $retryAfter === null ? null : (float) $retryAfter)) {
-                // The server asked for longer than the policy allows. Raising
-                // the error beats blocking a web request for ten minutes, and
-                // the caller can read `getRetryAfter()` and decide.
-                throw $error;
-            }
-        }
-    }
-
-    /** @throws ChatlyException When a 2xx body is not the JSON it claims to be. */
-    private function decode(HttpResponse $response): mixed
-    {
-        if ($response->status === 204 || $response->body === '') {
-            return null;
-        }
-        try {
-            return json_decode($response->body, true, 512, \JSON_THROW_ON_ERROR);
-        } catch (\JsonException $e) {
-            throw new ChatlyException(
-                'The API returned a ' . $response->status . ' whose body is not valid JSON: ' . $e->getMessage(),
-                $response->status,
-                'invalid_json',
-                $response->header('x-request-id'),
-                $response->body,
-                $response->headers,
-                $e,
-            );
-        }
-    }
-
-    private static function normalisePath(string $path): string
-    {
-        if ($path === '') {
-            throw new \InvalidArgumentException('ChatlyClient: path is empty');
-        }
-
-        return $path[0] === '/' ? $path : '/' . $path;
-    }
-
-    /**
-     * Build a query string in which repeated keys stay repeated.
-     *
-     * `http_build_query(['filter[]' => ['a','b']])` produces
-     * `filter%5B%5D%5B0%5D=a&filter%5B%5D%5B1%5D=b` — indexed keys the API
-     * does not read. This emits `filter%5B%5D=a&filter%5B%5D=b`, which is two
-     * parameters with the same name, which is what `?filter[]=` means.
-     *
-     * @param array<string,mixed> $query
-     */
-    private static function buildQuery(array $query): string
-    {
-        $pairs = [];
-        foreach ($query as $key => $value) {
-            if ($value === null) {
-                // Skip rather than send `key=`. An empty value is a real,
-                // different thing to several of these filters.
-                continue;
-            }
-            foreach (\is_array($value) ? $value : [$value] as $single) {
-                if ($single === null) {
-                    continue;
-                }
-                if (\is_array($single)) {
-                    throw new \InvalidArgumentException(sprintf(
-                        'ChatlyClient: query parameter "%s" is nested. Pass a scalar or a flat list; '
-                        . 'the API expresses structure in the VALUE, e.g. ["filter[]" => ["status:open"]].',
-                        (string) $key,
-                    ));
-                }
-                $pairs[] = rawurlencode((string) $key) . '=' . rawurlencode(self::queryValue($single));
-            }
-        }
-
-        return $pairs === [] ? '' : '?' . implode('&', $pairs);
-    }
-
-    private static function queryValue(mixed $value): string
-    {
-        if (\is_bool($value)) {
-            // `true`/`false`, not `1`/``. An empty string for false is how a
-            // boolean filter silently becomes "unset".
-            return $value ? 'true' : 'false';
-        }
-        if ($value instanceof \DateTimeInterface) {
-            return $value->format(\DATE_ATOM);
-        }
-        if (\is_scalar($value)) {
-            return (string) $value;
-        }
-        if ($value instanceof \Stringable) {
-            return (string) $value;
-        }
-
-        throw new \InvalidArgumentException(sprintf(
-            'ChatlyClient: query values must be scalar, Stringable or DateTimeInterface, got %s.',
-            get_debug_type($value),
-        ));
-    }
-
-    /**
-     * The API accepts "a UUID, or any opaque token of 16–128 characters from
-     * the unreserved + sub-delims URI set". Checked here so a bad pinned key
-     * is an exception where you set it, rather than a 400 on an unrelated
-     * write later.
-     */
-    private static function assertIdempotencyKey(string $key): void
-    {
-        if (preg_match('/^[A-Za-z0-9\-._~!$&\'()*+,;=:@]{16,128}$/', $key) !== 1) {
-            throw new \InvalidArgumentException(
-                'ChatlyClient: an Idempotency-Key must be 16–128 characters from the unreserved + '
-                . 'sub-delims URI set. A UUID always qualifies; so does "order-4821:welcome-email".',
-            );
-        }
-    }
-
-    /**
-     * A v4 UUID from `random_bytes`.
-     *
-     * CSPRNG rather than `mt_rand`: two processes seeded alike would mint the
-     * same key, and an idempotency key that collides across unrelated writes
-     * makes the API replay one caller's response to another.
-     */
-    private static function uuid4(): string
-    {
-        $bytes = random_bytes(16);
-        $bytes[6] = \chr((\ord($bytes[6]) & 0x0F) | 0x40);
-        $bytes[8] = \chr((\ord($bytes[8]) & 0x3F) | 0x80);
-
-        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($bytes), 4));
-    }
 }

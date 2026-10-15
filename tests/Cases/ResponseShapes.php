@@ -98,9 +98,9 @@ final class ResponseShapes
     /**
      * The distribution, asserted so a flattened column cannot pass.
      *
-     * Counted from the 162 `@ZodResponse` schemas — 55 on 2026-10-12, 104 more
+     * Counted from the 163 handlers' schemas — 55 on 2026-10-12, 104 more
      * on 2026-10-14, then 3 the same day. Each was read off its handler. A
-     * column that said `object` 162 times would satisfy every other
+     * column that said `object` 163 times would satisfy every other
      * assertion in this suite and be worthless, which is the only reason
      * these numbers are written down. If the surface grows they change — but
      * all four values must stay represented, and `empty` must stay at exactly
@@ -108,7 +108,9 @@ final class ResponseShapes
      *
      * It was 14/10/30/1 at 55 routes. The 104 added 18 arrays, 3 pages and 83
      * objects; the last 3 added `workspace.mine` (array), `root.me` and
-     * `webhooks.delete` (objects). No addition has ever been `empty`: nothing
+     * `webhooks.delete` (objects). `visitors.start_conversation` took `object`
+     * from 115 to 116 on 2026-10-14 — the one row here derived from a service
+     * return type rather than a `@ZodResponse`, because its handler has none. No addition has ever been `empty`: nothing
      * else on this surface is a real 204, and SIX routes that look like one
      * are not — `ai.delete_tool` and `bot_routes.delete` answer
      * `{ deleted: true }`, `triggers.delete` and `webhooks.delete` answer
@@ -118,7 +120,7 @@ final class ResponseShapes
     public const EXPECTED_DISTRIBUTION = [
         self::ARRAY_SHAPE => 33,
         self::PAGE => 13,
-        self::OBJECT => 115,
+        self::OBJECT => 116,
         self::EMPTY_SHAPE => 1,
     ];
 
@@ -133,7 +135,7 @@ final class ResponseShapes
     public const SENTINEL_ROW = ['id' => 'x_1'];
 
     /**
-     * `ns.name => shape`, for all 162 routes.
+     * `ns.name => shape`, for all 163 routes.
      *
      * @return array<string,string>
      */
@@ -425,6 +427,20 @@ final class ResponseShapes
             // `{ gap, articleId, reason }`, where `articleId` is nullable on
             // the happy path.
             'knowledge_gaps.draft' => self::OBJECT,
+
+            /*
+             * `{ conversationId }` — one key, and the only row on this column
+             * whose shape could NOT be read off a `@ZodResponse`, because the
+             * handler has none. It was read off the service it forwards to
+             * instead: `VisitorsService::startProactiveConversation` is
+             * declared `Promise<{ conversationId: string }>`
+             * (`visitors.service.ts:409`).
+             *
+             * An object, not a page, and nothing about the route says so from
+             * the outside — a POST that opens one thing and answers an id for
+             * it is the same shape as `conversations.send`.
+             */
+            'visitors.start_conversation' => self::OBJECT,
         ];
     }
 

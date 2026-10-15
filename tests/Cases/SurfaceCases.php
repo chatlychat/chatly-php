@@ -10,7 +10,7 @@ use Chatly\Tests\FakeTransport;
 use Chatly\Tests\Skipped;
 
 /**
- * The 162 methods of the shared SDK surface, EXECUTED, and the parity
+ * The 163 methods of the shared SDK surface, EXECUTED, and the parity
  * evidence that execution produces.
  *
  * ─── WHY THIS RUNS THE CLIENT INSTEAD OF READING THE SOURCE ───────────────
@@ -102,7 +102,7 @@ final class SurfaceCases
     /**
      * The route table, and the manifest-namespace to PHP-property mapping.
      *
-     * Both live in {@see SurfaceTable} — 159 rows of data and one derivation,
+     * Both live in {@see SurfaceTable} — 163 rows of data and one derivation,
      * with no assertions in them. They are re-exposed here because this is
      * the class the rest of the suite names, and because splitting data from
      * the behaviour that checks it is the only way this file stays under the
@@ -135,7 +135,7 @@ final class SurfaceCases
      *
      * It also records the top-level RESPONSE shape, by feeding each method the
      * shape {@see ResponseShapes} declares for its route — one fixture per
-     * route, not one for all 162 — and asserting the value it hands back
+     * route, not one for all 163 — and asserting the value it hands back
      * really has it. See that class for why the declaration is hand-written
      * and not read from `surface.json`.
      *
@@ -149,7 +149,7 @@ final class SurfaceCases
             $label = $namespace . '.' . $specName;
 
             /*
-             * The shape THIS route answers with, not one shape for all 162.
+             * The shape THIS route answers with, not one shape for all 163.
              *
              * A fake that answers every route with `{items,nextCursor}` is
              * how the .NET and Rust clients shipped a decode error on
@@ -333,9 +333,9 @@ final class SurfaceCases
     public static function cases(): array
     {
         return [
-            'surface: all 162 methods execute the documented verb and path, and surface.lock.json is regenerated from what they sent' => static function (): void {
+            'surface: all 163 methods execute the documented verb and path, and surface.lock.json is regenerated from what they sent' => static function (): void {
                 $entries = self::recordLockEntries();
-                Assert::same(162, \count($entries), 'the shared surface is 162 methods');
+                Assert::same(163, \count($entries), 'the shared surface is 163 methods');
 
                 $keys = array_map(static fn (array $e): string => $e['ns'] . '.' . $e['name'], $entries);
                 Assert::same(
@@ -350,7 +350,7 @@ final class SurfaceCases
                  * ResponseShapes self-tests its own distribution; this
                  * asserts the same of what actually reached the lock, so a
                  * generator that flattened the field on the way out — or a
-                 * sweep that dropped it — fails here rather than shipping 162
+                 * sweep that dropped it — fails here rather than shipping 163
                  * identical values for the gate to accept.
                  */
                 $recordedShapes = [];
@@ -363,7 +363,7 @@ final class SurfaceCases
                 Assert::same(
                     $expectedShapes,
                     $recordedShapes,
-                    'the shapes written to the lock must be the documented 33/13/115/1, all four present',
+                    'the shapes written to the lock must be the documented 33/13/116/1, all four present',
                 );
 
                 $lock = [
@@ -444,7 +444,7 @@ final class SurfaceCases
                 $recorded = self::recordLockEntries();
                 // Compared as `ns.name => "VERB path"` rather than as whole
                 // arrays, so a stale lock reports the handful of rows that
-                // differ instead of dumping all 162.
+                // differ instead of dumping all 163.
                 $onDisk = self::routeMap($lock['entries']);
                 $now = self::routeMap($recorded);
                 foreach ($now as $key => $route) {

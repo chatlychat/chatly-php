@@ -124,16 +124,58 @@ final class Bots extends AbstractResource
     /**
      * `POST /v1/bots/{id}/external/rotate-secret` — new signing secret.
      *
-     * **The old secret stopped working the moment this returned**, and the new
-     * one is shown once. There is no overlap window, so deploy the new secret
-     * to your verifier in the same breath — every delivery between this call
-     * and that deploy fails signature verification at your end.
+     * The new secret is shown once. Returns
+     * `['signingSecret' => string, 'activatesAt' => ?string]`.
      *
-     * Takes no body.
+     * ─── WITHOUT `$activateAt`: A HARD CUT ────────────────────────────────
+     *
+     * The old secret stops signing the moment this returns and `activatesAt`
+     * is null. Deploy the new secret to your verifier in the same breath —
+     * every delivery between this call and that deploy fails signature
+     * verification at your end. On the wire this sends `{}`, exactly what it
+     * always has.
+     *
+     * ─── WITH `$activateAt`: AN OVERLAP WINDOW ────────────────────────────
+     *
+     * The OLD secret keeps signing every delivery until that instant and the
+     * new one signs from then on; `activatesAt` echoes the switch time. Each
+     * delivery still carries ONE signature, so hold both secrets in your
+     * verifier for the window. At most 168 hours ahead — the server measures
+     * that against its own clock and answers 400 beyond it, so this SDK does
+     * not second-guess it. An instant already in the past, or an agent with
+     * no usable secret today, is a hard cut and answers `activatesAt: null`.
+     *
+     * @param string|\DateTimeInterface|null $activateAt A string is sent
+     *        verbatim (ISO 8601 with `Z` or an offset; the server validates
+     *        it). A DateTimeInterface is converted to UTC and sent as
+     *        `Y-m-d\TH:i:s.v\Z`.
      */
-    public function rotateExternalSecret(string $id): mixed
+    public function rotateExternalSecret(string $id, string|\DateTimeInterface|null $activateAt = null): mixed
     {
-        return $this->httpPost('/v1/bots/' . self::seg($id) . '/external/rotate-secret');
+        $path = '/v1/bots/' . self::seg($id) . '/external/rotate-secret';
+        if ($activateAt === null) {
+            return $this->httpPost($path);
+        }
+
+        return $this->httpPost($path, ['activateAt' => self::utcMillis($activateAt)]);
+    }
+
+    /**
+     * An instant as UTC with milliseconds, or a caller's string untouched.
+     *
+     * Not {@see AbstractResource::instant()}: that goes through
+     * `getTimestamp()` and drops sub-second precision, which is fine for a
+     * scheduled send and needlessly lossy here.
+     */
+    private static function utcMillis(string|\DateTimeInterface $when): string
+    {
+        if (\is_string($when)) {
+            return $when;
+        }
+
+        return \DateTimeImmutable::createFromInterface($when)
+            ->setTimezone(new \DateTimeZone('UTC'))
+            ->format('Y-m-d\\TH:i:s.v\\Z');
     }
 
     /**

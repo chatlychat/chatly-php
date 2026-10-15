@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Chatly\Tests;
 
+use Chatly\Tests\Cases\BotRotationCases;
 use Chatly\Tests\Cases\ConstructionCases;
 use Chatly\Tests\Cases\ErrorCases;
 use Chatly\Tests\Cases\IdentityCases;
@@ -28,6 +29,7 @@ final class Suite
         $groups = [
             'construction' => ConstructionCases::cases(),
             'request' => RequestCases::cases(),
+            'bots' => BotRotationCases::cases(),
             'errors' => ErrorCases::cases(),
             'pagination' => PaginationCases::cases(),
             'webhooks' => WebhookCases::cases(),

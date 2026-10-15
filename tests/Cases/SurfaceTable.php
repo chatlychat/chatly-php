@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Chatly\Tests\Cases;
 
 /**
- * The 159 rows of the shared SDK surface, as data.
+ * The 163 rows of the shared SDK surface, as data.
  *
  * Split out of {@see SurfaceCases} for one reason: that file holds the
  * EXECUTION and the assertions, this one holds the table they run over, and
@@ -225,6 +225,11 @@ final class SurfaceTable
             ['knowledge_gaps', 'list', 'list', 'GET', '/v1/knowledge-gaps', []],
             ['knowledge_gaps', 'update', 'update', 'PATCH', '/v1/knowledge-gaps/{id}', ['__p0__', 'resolved']],
             ['knowledge_gaps', 'draft', 'draft', 'POST', '/v1/knowledge-gaps/{id}/draft', ['__p0__']],
+
+            // The 163rd route, key-accessible since 2026-10-14. No body and no
+            // query: the path parameter is the whole input, so the argument
+            // list is one sentinel and nothing else.
+            ['visitors', 'start_conversation', 'startConversation', 'POST', '/v1/visitors/{contactId}/start-conversation', ['__p0__']],
         ];
     }
 

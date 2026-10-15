@@ -139,6 +139,59 @@ final class ErrorCases
                 Assert::same('req_429', $error->getRequestId(), 'request id');
             },
 
+            /*
+             * ─── THE 429 THAT CARRIES NO Retry-After AT ALL ───────────────
+             *
+             * Measured against the API on 2026-10-14, not assumed. The
+             * per-contact outreach limit on
+             * `POST /v1/visitors/{contactId}/start-conversation` throws the
+             * shared `RateLimitedError`, which puts its TTL in
+             * `details.retryAfterSeconds` and NO header anywhere:
+             * `app-exception.filter.ts` sends `wireError(...)` and sets no
+             * headers, and the `onSend` hook in `main.ts` that synthesises a
+             * plain `Retry-After` derives it only from the
+             * `Retry-After-{bucket}` headers `@nestjs/throttler` emits. This
+             * refusal is not the throttler's, so there is nothing to derive
+             * from.
+             *
+             * The fixture therefore has NO retry-after header of any kind.
+             * Adding one would be inventing the server's shape — the trap
+             * `wireError`'s own docstring exists about — and would make this
+             * case agree with a client that only ever reads headers.
+             *
+             * `getRetryAfter()` is null here BY DESIGN, and that is the point
+             * worth pinning: a caller must branch on the value's presence,
+             * not on the 429.
+             */
+            '§3 a 429 with no Retry-After header leaves retryAfter null and the TTL in the body' => static function (): void {
+                $transport = new FakeTransport();
+                $transport->push(
+                    429,
+                    self::envelope('rate_limited', 'Too many requests', ['retryAfterSeconds' => 1800]),
+                    ['x-request-id' => 'req_outreach'],
+                );
+                $chatly = self::client($transport, maxAttempts: 1);
+                $error = Assert::throws(
+                    RateLimitException::class,
+                    static fn () => $chatly->visitors->startConversation('cont_1'),
+                    'a 429 is still the rate-limit type without a header',
+                );
+
+                Assert::same(429, $error->getStatus(), 'status');
+                Assert::same(
+                    null,
+                    $error->getRetryAfter(),
+                    'there is no Retry-After header on the per-contact limit, so this must be null '
+                    . 'rather than an invented 0',
+                );
+                Assert::same(
+                    1800,
+                    $error->getData()['details']['retryAfterSeconds'] ?? null,
+                    'the wait is readable from the error body, which is the only place it is sent',
+                );
+                Assert::same('req_outreach', $error->getRequestId(), 'request id');
+            },
+
             '§3 a plain Retry-After is read as well, and the longest wait wins' => static function (): void {
                 $transport = new FakeTransport();
                 $transport->push(429, self::envelope('rate_limited', 'slow down'), ['retry-after' => '3']);

@@ -51,17 +51,24 @@ actually needs, and keep it in your environment, not in your repository.
 
 ### Which routes are reachable
 
-174 of the API's 909 routes accept an API key. The rest answer a `ck_` key
-with **403** because they need a signed-in person — a reaction records _who_
-reacted, and a key is not a person. Those two figures come from
-`node scripts/report-api-key-surface.mjs --json`, which is the only place to
-read them: every page that stated them by hand has been wrong.
+Most of the API answers a `ck_` key with **403** because it needs a signed-in
+person — a reaction records _who_ reacted, and a key is not a person.
 
-This SDK has hand-written methods for **162** of those routes — every entry in
-`packages/sdk-spec/surface.json`, the table below. The other 12 are reachable
-through [`request()`](#the-escape-hatch) with the same auth, retries,
-idempotency and error handling: they accept a key but are not in the manifest,
-so a typed method would fail the cross-SDK parity gate.
+**163** routes are open to a key, and this SDK has a hand-written method for
+every one of them: each is an entry in `packages/sdk-spec/surface.json`, the
+table below. Anything that opens later is reachable through
+[`request()`](#the-escape-hatch) with the same auth, retries, idempotency and
+error handling until a typed method lands.
+
+That count is the `keyAccessible` figure in `docs/api-counts.json`, generated
+from the deployed OpenAPI document — 162 there and 163 in a local build,
+because `POST /v1/visitors/{contactId}/start-conversation` opened on
+2026-10-14 and has not shipped yet. Do **not** read it off
+`node scripts/report-api-key-surface.mjs`, which counts `@AllowApiKey()`
+_decorators_: one class-level decorator opens many handlers and counts once,
+so that number is always the larger and is not in the same units. This README
+subtracted the two for a while and reported a dozen missing typed methods that
+did not exist.
 
 Methods for routes that always 403 are deliberately **absent**. There is no
 `conversations->react()` and no `channels->delete()`, because shipping a
@@ -521,21 +528,21 @@ reachable with a key.
 
 ### `bots`
 
-| Method                                                                            | Route                                                  |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `list(array $query = []): Page`                                                   | `GET /v1/bots`                                         |
-| `autoList(array $query = [], ?int $maxPages = null): Generator`                   | walks `GET /v1/bots`                                   |
-| `get(string $id)`                                                                 | `GET /v1/bots/{id}`                                    |
-| `create(array $bot)`                                                              | `POST /v1/bots`                                        |
-| `update(string $id, array $changes)`                                              | `PATCH /v1/bots/{id}`                                  |
-| `updateExternal(string $id, array $changes)`                                      | `PATCH /v1/bots/{id}/external`                         |
-| `rotateExternalSecret(string $id)`                                                | `POST /v1/bots/{id}/external/rotate-secret`            |
-| `deliveries(string $id, array $query = []): Page`                                 | `GET /v1/bots/{id}/deliveries`                         |
-| `autoDeliveries(string $id, array $query = [], ?int $maxPages = null): Generator` | walks the deliveries                                   |
-| `delivery(string $id, string $deliveryId)`                                        | `GET /v1/bots/{id}/deliveries/{deliveryId}`            |
-| `redeliver(string $id, string $deliveryId)`                                       | `POST /v1/bots/{id}/deliveries/{deliveryId}/redeliver` |
-| `testDelivery(string $id)`                                                        | `POST /v1/bots/{id}/test-delivery`                     |
-| `analytics(string $id, ?int $days = null)`                                        | `GET /v1/bots/{id}/analytics`                          |
+| Method                                                                                 | Route                                                  |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `list(array $query = []): Page`                                                        | `GET /v1/bots`                                         |
+| `autoList(array $query = [], ?int $maxPages = null): Generator`                        | walks `GET /v1/bots`                                   |
+| `get(string $id)`                                                                      | `GET /v1/bots/{id}`                                    |
+| `create(array $bot)`                                                                   | `POST /v1/bots`                                        |
+| `update(string $id, array $changes)`                                                   | `PATCH /v1/bots/{id}`                                  |
+| `updateExternal(string $id, array $changes)`                                           | `PATCH /v1/bots/{id}/external`                         |
+| `rotateExternalSecret(string $id, string\|DateTimeInterface\|null $activateAt = null)` | `POST /v1/bots/{id}/external/rotate-secret`            |
+| `deliveries(string $id, array $query = []): Page`                                      | `GET /v1/bots/{id}/deliveries`                         |
+| `autoDeliveries(string $id, array $query = [], ?int $maxPages = null): Generator`      | walks the deliveries                                   |
+| `delivery(string $id, string $deliveryId)`                                             | `GET /v1/bots/{id}/deliveries/{deliveryId}`            |
+| `redeliver(string $id, string $deliveryId)`                                            | `POST /v1/bots/{id}/deliveries/{deliveryId}/redeliver` |
+| `testDelivery(string $id)`                                                             | `POST /v1/bots/{id}/test-delivery`                     |
+| `analytics(string $id, ?int $days = null)`                                             | `GET /v1/bots/{id}/analytics`                          |
 
 - `create()` takes a **union of two disjoint bodies** — a Chatly persona
   (omit `type`) or an external agent (`type: 'external'`). Neither half is
@@ -544,8 +551,15 @@ reachable with a key.
   bot with no prompt.
 - On `type: 'external'`, the response carries a signing secret and a `cb_`
   token **shown once**.
-- `rotateExternalSecret()` has **no overlap window**: the old secret stops
-  working the moment it returns.
+- `rotateExternalSecret()` with no `$activateAt` is a **hard cut**: the old
+  secret stops signing the moment it returns, and the response's
+  `activatesAt` is `null`. Pass `$activateAt` (an ISO 8601 string, sent
+  verbatim, or a `DateTimeInterface`, sent as UTC `Z`) for an **overlap
+  window**: the old secret keeps signing every delivery until that instant,
+  then the new one takes over, and `activatesAt` echoes it. Each delivery
+  carries one signature, so hold both secrets in your verifier for the
+  window. At most 168 hours ahead (a 400 beyond that, judged by the server's
+  clock); an instant already past is a hard cut.
 - A `deliveries()` row does **not** carry the signed payload; read one
   delivery for that.
 - `analytics()` reports p50/p95/max and never a mean, and **every rate is
@@ -712,6 +726,42 @@ with a 200; the same value on `update()` is a 400. `draft()` answers 201 with
 a **nullable `articleId`**: a gap with no conversation to draft from gets a
 null and a `reason`. The article is a draft and is not published until a
 person publishes it.
+
+### `visitors`
+
+| Method                          | Route                                              |
+| ------------------------------- | -------------------------------------------------- |
+| `startConversation(string $id)` | `POST /v1/visitors/{contactId}/start-conversation` |
+
+Opens a thread with a contact who did **not** write to you first, and answers
+`{ conversationId }`. Takes no body: the contact id is the whole input.
+
+**Off by default.** A `PermissionException` here is more often the workspace
+setting than your scopes — `settings.proactiveOutreach.apiKeysMayStartConversations`
+has to be switched on by an owner or admin with
+`PATCH /v1/workspace/settings`, which needs a signed-in person. You can read
+the current value with `$chatly->workspace->settings()`. `conversations:write`
+was already grantable and is already held by keys minted for ticket bulk
+actions and schedule-send, so the scope was never the gate.
+
+**Three per contact per hour**, counted per contact rather than per caller,
+because the abuse shape is several threads aimed at one person. The fourth
+call in the window is a `RateLimitException` — but **`getRetryAfter()` returns
+null on it**. That limit sends no `Retry-After` header of any kind; the wait is
+in the response body, at
+`$e->getData()['details']['retryAfterSeconds']`. The route also inherits the
+global throttler buckets, and a 429 from one of those does carry the suffixed
+headers `getRetryAfter()` reads, so test for the value rather than assuming a
+429 supplies one.
+
+**An offline visitor is not notified** — no email, no push, no provider
+message. The greeting is persisted and the widget renders it from history on
+their next page view, so an integration that needs to reach somebody who has
+left the site wants an email or SMS conversation instead.
+
+The two other routes on that controller — `GET /v1/visitors/live` and
+`GET /v1/visitors/{contactId}/pages` — carry no `@AllowApiKey()` and answer a
+key with 403, so there is deliberately no method for either.
 
 ## Error handling
 

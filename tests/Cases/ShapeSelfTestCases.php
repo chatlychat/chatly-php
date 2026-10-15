@@ -19,7 +19,7 @@ use Chatly\Tests\Assert;
  * fixture SOURCE for the whole surface pass, which means a flaw in it makes
  * that pass agree with itself rather than with the API: a classifier that
  * answered one word every time, or a declared column that went flat, would
- * satisfy all 159 routes without failing anything. These are the cases that
+ * satisfy all 163 routes without failing anything. These are the cases that
  * stop that, including the negative one about `is_array()` — the obvious
  * implementation, which would have made the entire shape pass theatre.
  */
@@ -28,7 +28,7 @@ final class ShapeSelfTestCases
     /**
      * Cases that prove {@see describe()} itself is not vacuous.
      *
-     * A classifier is the kind of thing that passes 162 routes while answering
+     * A classifier is the kind of thing that passes 163 routes while answering
      * the same word every time, so it gets its own tests — including the
      * negative one that `is_array()`, the obvious implementation, would have
      * made the whole pass meaningless.
@@ -45,7 +45,7 @@ final class ShapeSelfTestCases
                 /*
                  * The trap, stated as an assertion. `json_decode(…, true)`
                  * gives the SAME PHP type for both, so a classifier built on
-                 * `is_array()` would answer one word for 161 of the 162 routes
+                 * `is_array()` would answer one word for 162 of the 163 routes
                  * and the whole shape pass would be theatre.
                  */
                 Assert::true(\is_array($asObject), 'a JSON object decodes to a PHP array');
@@ -111,9 +111,9 @@ final class ShapeSelfTestCases
                 );
             },
 
-            '§10.10 shapes: the declared column covers all 162 routes, with the documented distribution' => static function (): void {
+            '§10.10 shapes: the declared column covers all 163 routes, with the documented distribution' => static function (): void {
                 $declared = ResponseShapes::declared();
-                Assert::same(162, \count($declared), 'one declaration per route on the shared surface');
+                Assert::same(163, \count($declared), 'one declaration per route on the shared surface');
 
                 foreach ($declared as $label => $shape) {
                     Assert::true(
@@ -128,10 +128,10 @@ final class ShapeSelfTestCases
                 }
                 /*
                  * Anti-vacuity. See EXPECTED_DISTRIBUTION — a column that
-                 * said `object` 162 times satisfies every other assertion in
+                 * said `object` 163 times satisfies every other assertion in
                  * this suite, and unanimity about nothing is what this
                  * catches. It would also be nearly right, which is the part
-                 * that makes it dangerous: 115 of the 162 really are objects.
+                 * that makes it dangerous: 116 of the 163 really are objects.
                  */
                 foreach (ResponseShapes::EXPECTED_DISTRIBUTION as $shape => $expected) {
                     Assert::same($expected, $counts[$shape], "the surface carries {$expected} `{$shape}` routes");

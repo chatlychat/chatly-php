@@ -468,6 +468,70 @@ final class RequestCases
                     'the bulk body shape must match the route',
                 );
             },
+
+            /*
+             * ─── ASSERTED ON WHAT WENT OUT, NOT ON WHAT CAME BACK ─────────
+             *
+             * The fake answers `{conversationId}` here because that is what
+             * the route answers, but nothing below reads the response. Every
+             * assertion is about the REQUEST, which is the only half a fake
+             * transport cannot agree with by accident: a fixture that echoes
+             * whatever the SDK asked for agrees with any bug in it, and that
+             * is how two sibling SDKs shipped a paginator over a bare-array
+             * route with green suites.
+             *
+             * The interesting assertion is the last one. `startConversation`
+             * takes exactly one argument and it belongs in the PATH; a method
+             * that put it in the body instead would still be a POST to a
+             * plausible URL and would still get a 201 out of this fake. The
+             * handler declares no `@Body()` at all, so zod never sees the
+             * field and the API would answer 201 having ignored it.
+             */
+            '§2 visitors->startConversation sends the id in the PATH, with a key and no fields' => static function (): void {
+                $transport = new FakeTransport();
+                $transport->push(201, ['conversationId' => 'conv_1']);
+                self::client($transport)->visitors->startConversation('cont_1');
+
+                Assert::same(1, $transport->count(), 'exactly one request');
+                Assert::same('POST', $transport->method(), 'a POST, not a PUT or a GET');
+                Assert::same(
+                    '/v1/visitors/cont_1/start-conversation',
+                    $transport->path(),
+                    'the contact id is interpolated into the path',
+                );
+                Assert::same('', $transport->query(), 'the route takes no query parameters');
+                Assert::true(
+                    $transport->header('idempotency-key') !== null,
+                    'the controller is @RequireIdempotencyKey() at class level with no opt-out on '
+                    . 'this handler, so the API answers 428 without the header',
+                );
+
+                /*
+                 * No CALLER FIELDS on the wire.
+                 *
+                 * `{}` and not `null` is this SDK's transport-wide house rule
+                 * for a bodyless write, with a reason given at the `elseif` in
+                 * ChatlyClient::send(): a request with no body and no
+                 * content-type is at the mercy of whatever body parser sits in
+                 * front of the API. All seven bodyless POSTs on this surface
+                 * send it, and a handler that declares no `@Body()` ignores an
+                 * empty object. So the assertion with teeth is that the body
+                 * carries no FIELDS — most of all not the contact id, which
+                 * belongs in the path.
+                 */
+                Assert::same('{}', $transport->body(), 'no caller fields may be serialised into the body');
+                Assert::same([], $transport->decodedBody(), 'the body decodes to zero fields');
+            },
+
+            '§2 startConversation refuses an empty contact id before the transport' => static function (): void {
+                $transport = new FakeTransport();
+                Assert::throws(
+                    \InvalidArgumentException::class,
+                    static fn () => self::client($transport)->visitors->startConversation(''),
+                    'an empty id would POST to /v1/visitors//start-conversation',
+                );
+                Assert::same(0, $transport->count(), 'nothing may reach the transport');
+            },
         ];
     }
 }
