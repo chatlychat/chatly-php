@@ -11,6 +11,20 @@ you.
 
 ### Added
 
+- **`Webhooks::verifyChatlySignature(array $input)`** — one verifier for all
+  eight signed Chatly surfaces (event webhooks, agent deliveries, AI tool
+  calls, canvas steps, customer-card fetches, workflow actions and the
+  unified `x-chatly-signature-v2`). It takes the surface explicitly, because
+  three surfaces share `x-chatly-signature` and sign different strings, and
+  returns an immutable `ChatlySignatureResult` with a stable `reason` and a
+  printable `message` instead of a bare bool. Supports secret lists during a
+  rotation (`secretIndex` indexes the list you passed), multiple `v1` digests,
+  the v2 `prefer`/`require`/`ignore` policy and the `b=` base marker. Never
+  throws, on any input. A timestamp beyond `PHP_INT_MAX` (or whose
+  milliseconds would be) is `malformed_timestamp`, never a float. Proven
+  against the cross-SDK corpus, one test case per vector. The table and
+  constants are on `Chatly\ChatlySignatures`. `verifySignature()` is
+  unchanged.
 - `bots->rotateExternalSecret()` takes an optional second argument,
   `string|DateTimeInterface|null $activateAt`, for an **overlap window**: the
   old secret keeps signing deliveries until that instant. It is sent as

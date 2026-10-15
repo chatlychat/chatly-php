@@ -1063,6 +1063,75 @@ $delivery = $chatly->webhooks->delivery($id);
 Webhooks::verifySignature($delivery['body'], $delivery['signature'], $secret, INF);
 ```
 
+## Verifying any Chatly signature — `verifyChatlySignature`
+
+`verifySignature` above covers one surface, the event webhook, and answers
+`true`/`false`. Chatly signs eight kinds of outbound request, and three of
+them send the same `x-chatly-signature` header over three **different**
+strings — so the header name cannot tell a verifier what to check. You say
+which surface you are terminating, and get back a result that says why it
+refused:
+
+```php
+use Chatly\Webhooks;
+
+$result = Webhooks::verifyChatlySignature([
+    'surface' => 'event_webhook',
+    'body'    => file_get_contents('php://input'),   // the RAW bytes
+    'headers' => getallheaders(),                    // looked up case-insensitively
+    'secret'  => $_ENV['CHATLY_WEBHOOK_SECRET'],     // or a list, mid-rotation
+    'method'  => $_SERVER['REQUEST_METHOD'],
+    'path'    => $_SERVER['REQUEST_URI'],            // pathname + query, never the host
+]);
+
+if (!$result->ok) {
+    error_log("chatly signature refused: {$result->reason}: {$result->message}");
+    http_response_code(400);
+    exit;
+}
+```
+
+It **never throws** — not on a missing or duplicated header, a non-hex
+digest, an unknown surface, an empty secret, or a body that is an array.
+`$result` is an immutable `Chatly\ChatlySignatureResult`:
+
+| Property      | On `ok === true`                                                               | On `ok === false`                  |
+| ------------- | ------------------------------------------------------------------------------ | ---------------------------------- |
+| `surface`     | what verified — `unified_v2` when the v2 header was used                       | the surface refused                |
+| `timestampMs` | when it was signed, unix **milliseconds**; `null` on `workflow_webhook_legacy` | `null`                             |
+| `base`        | `body`, `target` or `body_only`                                                | `null`                             |
+| `secretIndex` | index into the `secret` list you passed (`0` for one)                          | `null`                             |
+| `reason`      | `null`                                                                         | one of `ChatlySignatures::REASONS` |
+| `message`     | `null`                                                                         | a sentence to log                  |
+
+| `surface`                 | Header                      | Signs                                                                         |
+| ------------------------- | --------------------------- | ----------------------------------------------------------------------------- |
+| `unified_v2`              | `x-chatly-signature-v2`     | `<t>.<METHOD>.<path>.<rawBody>`                                               |
+| `agent_delivery`          | `x-chatly-signature`        | `<t>.<rawBody>`                                                               |
+| `event_webhook`           | `x-livechat-signature`      | `<t>.<rawBody>`                                                               |
+| `ai_tool_call`            | `x-chatly-signature`        | `<t>.<METHOD>.<path>.<rawBody>`                                               |
+| `canvas_step`             | `x-chatly-canvas-signature` | `<ts>.<rawBody>`, ts in **ms**                                                |
+| `customer_card`           | `x-chatly-signature`        | `<ts>.<rawBody>`, ts in **ms**                                                |
+| `workflow_webhook`        | `x-chatly-signature-v2`     | `<t>.<rawBody>` or the target base                                            |
+| `workflow_webhook_legacy` | `x-chatly-signature`        | `<rawBody>` — no timestamp; refused unless `'allowUnprotectedReplay' => true` |
+
+The other keys: `toleranceSeconds` (default `300`, both directions; `INF`
+only for an archive), `v2` (`prefer` by default — verify
+`x-chatly-signature-v2` instead of the legacy header whenever it is present
+and you passed `method` and `path`; `require`; or `ignore`), and `nowMs`
+for tests. Pass `method` and `path` on every surface: it is what lets the
+default pick up the stronger unified signature the day the sender starts
+sending it, with no code change.
+
+`'secret'` takes a list during a rotation — `[$new, $old]` — and
+`secretIndex` tells you which verified, which is how you learn the old one
+is finally unused. Empty strings in the list are skipped but do not shift the
+index.
+
+The verdicts are pinned by a cross-SDK corpus
+(`tests/fixtures/signature_vectors.json`) that every Chatly SDK runs, so this
+verifier and the Node, Python, Go, … ones agree vector for vector.
+
 ## Identity hash
 
 When a workspace turns identity verification on, the widget must prove the

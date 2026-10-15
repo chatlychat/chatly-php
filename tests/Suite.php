@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Chatly\Tests;
 
 use Chatly\Tests\Cases\BotRotationCases;
+use Chatly\Tests\Cases\ChatlySignatureCases;
 use Chatly\Tests\Cases\ConstructionCases;
 use Chatly\Tests\Cases\ErrorCases;
 use Chatly\Tests\Cases\IdentityCases;
@@ -33,6 +34,8 @@ final class Suite
             'errors' => ErrorCases::cases(),
             'pagination' => PaginationCases::cases(),
             'webhooks' => WebhookCases::cases(),
+            // verifyChatlySignature: one case per cross-SDK corpus vector.
+            'signatures' => ChatlySignatureCases::cases(),
             'identity' => IdentityCases::cases(),
             'surface' => SurfaceCases::cases(),
             /*

@@ -97,6 +97,40 @@ final class Webhooks
     }
 
     /**
+     * Verify a signed request from ANY Chatly surface, with a reason on
+     * refusal. Never throws.
+     *
+     * The successor to {@see self::verifySignature()}, which stays exactly as
+     * it was: it verifies one surface (`event_webhook`) and answers a bare
+     * bool. This one takes the surface, so the same call verifies an agent
+     * delivery, a tool call, a canvas step, a customer-card fetch or a
+     * workflow action, picks up the unified `x-chatly-signature-v2` header
+     * when it appears, accepts a list of secrets during a rotation, and says
+     * WHY it refused — see {@see ChatlySignatures} for the table and every key
+     * `$input` takes.
+     *
+     * ```php
+     * $result = Webhooks::verifyChatlySignature([
+     *     'surface' => 'event_webhook',
+     *     'body'    => file_get_contents('php://input'),
+     *     'headers' => getallheaders(),
+     *     'secret'  => $_ENV['CHATLY_WEBHOOK_SECRET'],
+     *     'method'  => $_SERVER['REQUEST_METHOD'],
+     *     'path'    => $_SERVER['REQUEST_URI'],
+     * ]);
+     * if (!$result->ok) {
+     *     error_log("{$result->reason}: {$result->message}");
+     * }
+     * ```
+     *
+     * @param array<string,mixed> $input
+     */
+    public static function verifyChatlySignature(array $input): ChatlySignatureResult
+    {
+        return ChatlySignatures::verify($input);
+    }
+
+    /**
      * Split `t=…,v1=…` into `[timestamp, digest]`, or null if unusable.
      *
      * Returns null — never throws — for a missing field, a non-numeric `t`, a
