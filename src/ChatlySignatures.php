@@ -568,7 +568,7 @@ final class ChatlySignatures
             'timestamp_outside_tolerance',
             "The timestamp on {$surface} is " . number_format(round($driftMs / 1000), 0, '.', '') . 's '
                 . ($signedMs > $nowMs ? 'in the FUTURE' : 'in the past') . ', outside the '
-                . $toleranceSeconds . "s tolerance.{$unitHint}",
+                . SignatureText::describeTolerance($toleranceSeconds) . "s tolerance.{$unitHint}",
         );
     }
 

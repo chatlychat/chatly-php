@@ -180,4 +180,35 @@ final class SignatureText
 
         return $found;
     }
+
+    /**
+     * A tolerance, rendered for a human, WITHOUT coercing NAN or INF.
+     *
+     * Two reasons, and the first is a bug this replaced. PHP 8.5 raises
+     * `Warning: unexpected NAN value was coerced to string` on `. NAN`, and
+     * `phpunit.xml.dist` sets `failOnWarning="true"` — so the NAN-tolerance
+     * case, which is there to prove a NaN tolerance REFUSES rather than
+     * disabling the freshness check, was itself failing the suite on a modern
+     * interpreter. Only the message was ever affected; the refusal was always
+     * correct. The mirror CI matrix is 8.1 and 8.3, where the warning does not
+     * exist, which is how a red `vendor/bin/phpunit` stayed invisible.
+     *
+     * Second: the words match the reference. `String(NaN)` in JavaScript is
+     * "NaN" and `String(Infinity)` is "Infinity", where PHP's casts give "NAN"
+     * and "INF". An integrator comparing our SDKs' refusals should not have to
+     * wonder whether two spellings mean two things.
+     */
+    public static function describeTolerance(int|float $toleranceSeconds): string
+    {
+        if (\is_float($toleranceSeconds)) {
+            if (is_nan($toleranceSeconds)) {
+                return 'NaN';
+            }
+            if (is_infinite($toleranceSeconds)) {
+                return $toleranceSeconds > 0 ? 'Infinity' : '-Infinity';
+            }
+        }
+
+        return (string) $toleranceSeconds;
+    }
 }

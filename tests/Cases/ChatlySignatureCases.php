@@ -35,7 +35,12 @@ use Chatly\Webhooks;
  */
 final class ChatlySignatureCases
 {
-    private const FLOOR = 59;
+    /*
+     * 59 -> 61 on 2026-10-16: the corpus holds 61, so this was blind to the
+     * two newest vectors. Go, Rust, Java and .NET already floored at the
+     * count.
+     */
+    private const FLOOR = 61;
 
     private const CORPUS = __DIR__ . '/../fixtures/signature_vectors.json';
 

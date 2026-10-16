@@ -6,6 +6,7 @@ namespace Chatly\Tests;
 
 use Chatly\Tests\Cases\BotRotationCases;
 use Chatly\Tests\Cases\ChatlySignatureCases;
+use Chatly\Tests\Cases\ChatlySignatureMintCases;
 use Chatly\Tests\Cases\ConstructionCases;
 use Chatly\Tests\Cases\ErrorCases;
 use Chatly\Tests\Cases\IdentityCases;
@@ -36,6 +37,8 @@ final class Suite
             'webhooks' => WebhookCases::cases(),
             // verifyChatlySignature: one case per cross-SDK corpus vector.
             'signatures' => ChatlySignatureCases::cases(),
+            // signChatlyV2: the other direction, pinned against the reference.
+            'mint' => ChatlySignatureMintCases::cases(),
             'identity' => IdentityCases::cases(),
             'surface' => SurfaceCases::cases(),
             /*

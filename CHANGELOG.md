@@ -11,6 +11,24 @@ you.
 
 ### Added
 
+- **`Webhooks::signChatlyV2(base:, secret:, timestampSeconds:, body:, method:, path:)`**
+  — the other direction, for your own tests: it mints the
+  `x-chatly-signature-v2` value Chatly would send, so a test does not have to
+  re-derive `<t>.<METHOD>.<path>.<rawBody>` by hand and then agree with its
+  own mistake. `base` has no default (`'target'` for the unified base,
+  `'body'` for `<t>.<rawBody>`) because the two are indistinguishable from the
+  value alone, which is why the `b=` marker exists. Unlike the verifier it
+  THROWS `InvalidArgumentException` on an unmintable input — an unknown base,
+  a `'target'` mint with no method or path, an empty secret, a negative
+  timestamp — since a mint that guessed would sign a string the receiver
+  cannot rebuild. The construction lives in `Chatly\ChatlySignatureMint`,
+  whose `baseString()` returns the exact string being MACed and whose `BASES`
+  lists the two. A port of the Node SDK's `signChatlyV2`, pinned against the
+  frozen vector the platform's own producer pins, and tested round-trip
+  against this package's verifier — including the workflow action's
+  dual-digest value (`t=<T>,v1=<unified>,v1=<body>`, no marker), which the
+  cross-SDK corpus has no vector for.
+
 - **`Webhooks::verifyChatlySignature(array $input)`** — one verifier for all
   eight signed Chatly surfaces (event webhooks, agent deliveries, AI tool
   calls, canvas steps, customer-card fetches, workflow actions and the
@@ -47,6 +65,17 @@ you.
   `SurfaceTable::property()` holds the single mapping.
 
 ### Fixed
+
+- **A NaN `toleranceSeconds` made `vendor/bin/phpunit` fail on PHP 8.5.** The
+  refusal itself was always right — a NaN tolerance REFUSES rather than
+  silently disabling the freshness check, matching sdk-node — but rendering
+  the number into the message coerced `NAN` to a string, which PHP 8.5 raises
+  a warning for, and `phpunit.xml.dist` sets `failOnWarning="true"`. So the
+  very case that proves the refusal was the case failing the suite. The
+  mirror CI matrix is 8.1 and 8.3, where that warning does not exist, which
+  is how a red local suite stayed invisible. `SignatureText::describeTolerance`
+  now formats it explicitly, and spells it the way the reference does: `NaN`
+  and `Infinity`, not PHP's `NAN` and `INF`.
 
 - **Three key-accessible routes this SDK could not reach, found while
   completing the surface and now closed.** Each carried `@AllowApiKey()` and

@@ -1132,6 +1132,50 @@ The verdicts are pinned by a cross-SDK corpus
 (`tests/fixtures/signature_vectors.json`) that every Chatly SDK runs, so this
 verifier and the Node, Python, Go, … ones agree vector for vector.
 
+## Signing one, for your own tests — `signChatlyV2`
+
+Testing the handler above means firing a correctly signed request at it, and
+re-deriving `<t>.<METHOD>.<path>.<rawBody>` by hand in the test is how that
+goes wrong: get it wrong there and nowhere else, and the test passes while
+production refuses every delivery. `signChatlyV2` mints the value Chatly would
+send.
+
+```php
+use Chatly\Webhooks;
+
+$header = Webhooks::signChatlyV2(
+    base: 'target',                 // the unified <t>.<METHOD>.<path>.<rawBody>
+    secret: $secret,
+    timestampSeconds: 1760000000,   // SECONDS, never milliseconds
+    body: $raw,
+    method: 'POST',
+    path: '/hooks/chatly',
+);
+// t=1760000000,v1=<64 hex>,b=t
+```
+
+- **`base` has no default.** `'target'` is the unified base and `'body'` is
+  `<t>.<rawBody>`; the two are indistinguishable from the value alone, which
+  is exactly why the `b=` marker exists, so you have to say which you mean. An
+  *absent* marker means the body base — every v2 signature Chatly minted
+  before the marker existed was that construction.
+- **It throws, where the verifier does not.** An unknown `base`, a `'target'`
+  mint with no `method` or `path`, an empty secret or a negative timestamp all
+  throw `InvalidArgumentException`: a mint that guessed would produce a digest
+  over a string the receiver cannot rebuild, which arrives as "signature
+  mismatch" and sends them hunting their own secret.
+- `Chatly\ChatlySignatureMint::baseString(...)` returns the exact string being
+  MACed, if you want to pin it in a test of your own.
+- It is for **tests**. Nothing in this package sends a signed request to a
+  customer, and this is not a general-purpose signer for your own webhooks.
+
+The workflow "call a webhook" action is mid-migration and sends **two digests
+in one value with no marker** — `t=<T>,v1=<unified>,v1=<body>`. Build that
+from two mints by taking the `v1=` field out of each, which is what the
+producer does. Both digests verify; `verifyChatlySignature` with
+`'surface' => 'workflow_webhook'` takes the unified one when you pass `method`
+and `path` and the body one when you do not.
+
 ## Identity hash
 
 When a workspace turns identity verification on, the widget must prove the

@@ -131,6 +131,45 @@ final class Webhooks
     }
 
     /**
+     * Mint the `x-chatly-signature-v2` value Chatly would send — for YOUR
+     * tests, not for signing real outbound traffic.
+     *
+     * The other direction from {@see self::verifyChatlySignature()}, so a test
+     * can fire a correctly signed request at its own endpoint instead of
+     * re-deriving `<t>.<METHOD>.<path>.<rawBody>` by hand and agreeing with
+     * its own mistake. `base` is `'target'` for the unified base or `'body'`
+     * for `<t>.<rawBody>`, and it has no default — see
+     * {@see ChatlySignatureMint} for why, and for every refusal.
+     *
+     * ```php
+     * $header = Webhooks::signChatlyV2(
+     *     base: 'target',
+     *     secret: $secret,
+     *     timestampSeconds: 1760000000,
+     *     body: $raw,
+     *     method: 'POST',
+     *     path: '/hooks/chatly',
+     * );
+     * ```
+     *
+     * Unlike every other method here it THROWS on bad input
+     * (`InvalidArgumentException`): a mint that guessed would produce a
+     * signature nothing can reproduce.
+     *
+     * @param 'target'|'body' $base
+     */
+    public static function signChatlyV2(
+        string $base,
+        string $secret,
+        int $timestampSeconds,
+        string $body,
+        ?string $method = null,
+        ?string $path = null,
+    ): string {
+        return ChatlySignatureMint::sign($base, $secret, $timestampSeconds, $body, $method, $path);
+    }
+
+    /**
      * Split `t=…,v1=…` into `[timestamp, digest]`, or null if unusable.
      *
      * Returns null — never throws — for a missing field, a non-numeric `t`, a
